@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { ChevronDownIcon, ChevronUpIcon, ChevronsUpDownIcon } from "lucide-react";
 
 import { DecisionSelect } from "@/components/decision-select";
@@ -88,8 +88,8 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
               {rows.map((applicant) => {
                 const isExpanded = expanded === applicant.id;
                 return (
-                  <>
-                    <tr key={applicant.id} className="border-t border-border hover:bg-muted/25">
+                  <Fragment key={applicant.id}>
+                    <tr className="border-t border-border hover:bg-muted/25">
                       <td className="px-3 py-3">
                         <button
                           type="button"
@@ -134,7 +134,7 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                       </td>
                     </tr>
                     {isExpanded ? (
-                      <tr key={`${applicant.id}-detail`} className="border-t border-border bg-muted/25">
+                      <tr className="border-t border-border bg-muted/25">
                         <td colSpan={11} className="px-5 py-4">
                           <div className="flex max-w-3xl flex-col gap-3">
                             <div className="overflow-hidden rounded-xl border border-border bg-card">
@@ -164,7 +164,7 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                         </td>
                       </tr>
                     ) : null}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

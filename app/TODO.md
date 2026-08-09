@@ -21,36 +21,29 @@ The written applications currently come from a hardcoded fixture in `lib/applica
 
 The scoring screen is a two-column layout. The right column is an intentional empty state awaiting the additional views you mentioned. Nothing else depends on it.
 
-### Admin view: all graders' scores side by side
-
-The scoring screen deliberately never shows other graders' scores, to avoid anchoring. The comparison view belongs here instead — all graders' `written_scores` rows for an applicant, per question, with spread or disagreement highlighted so deliberation can focus on split decisions.
-
 ### The rest of the dashboard
 
-`CLAUDE.md` describes two surfaces and two deliberation types. Only the written scorer exists:
+`CLAUDE.md` describes two surfaces and two deliberation types. The written scorer and the written deliberation view exist; the interview side does not:
 
 - **Interviewer form** — interviewers submit notes and scores for a candidate.
-- **Deliberation dashboard** — the shared accept/deny view over all candidates.
-- **Interview deliberations** — the written side is built; the interview side is not.
+- **Interview deliberations** — the same aggregate-and-decide view over interview scores, and some way to weigh written against interview when the two disagree.
 
 ## Open decisions
 
-### Auth
+### Grader identity is unverified
 
-Not chosen. Right now a grader identifies themselves by picking their name from a dropdown, stored in `localStorage`, with nothing verifying the claim. That is acceptable for an internal tool where every user is trusted, but it means anyone can submit scores as anyone. Revisit before this handles real admissions decisions.
+Admin is a real boundary: a shared password mints an HMAC-signed httpOnly cookie, and every privileged server action calls `requireAdmin()` before touching the database.
+
+Grader identity is not. A grader picks their name at `/enter` and it is stored in `ctc-grader-id`, a plain unsigned cookie with `httpOnly: false`, and `submitScores` trusts the `graderId` its caller passes rather than reading it back from the session. Anyone who can reach the app can therefore submit scores under any grader's name. That is tolerable for an internal tool where every user is trusted and the surface is a handful of club members, but it should not survive contact with real admissions decisions. Real per-user login is the fix; signing the grader cookie and deriving `graderId` server-side inside `submitScores` is the cheap interim step.
 
 ### Regular vs admin permissions
 
-`CLAUDE.md` names two privilege levels but leaves both undefined. Nothing in the app enforces privileges today — grader assignment is a display-only label, not a permission. Define what each level can do before building the admin view above.
+The split is now drawn but not written down anywhere except the code. Admins manage graders, assignments, and decisions; graders read their own queue and submit their own scores, and cannot assign work to themselves or anyone else. Worth recording in `CLAUDE.md` so the boundary is a stated rule rather than an accident of which actions happen to call `requireAdmin()`.
 
 ### Hosting and deployment
 
-Never discussed. Vercel is the path of least resistance for a Next.js app at this scale, but the Supabase secret key must be set as a server-side environment variable, never as `NEXT_PUBLIC_`.
+Never discussed. Vercel is the path of least resistance for a Next.js app at this scale. Whatever the host, `SUPABASE_SECRET_KEY` and `ADMIN_PASSWORD` must be set as server-side environment variables, never as `NEXT_PUBLIC_` — `ADMIN_PASSWORD` doubles as the HMAC signing key for the admin cookie, so leaking it forges admin sessions as well as granting the password.
 
 ### Grader ordinal
 
 The original schema sketch had an `index` column to distinguish multiple graders of the same applicant. It was replaced by `grader_id` (a foreign key into `graders`) so the app can tell which row belongs to the current grader. If a numeric ordinal is ever wanted for display, derive it by ordering rows on `submitted_at` rather than storing it.
-
-### Rotate the Supabase secret key
-
-The key currently in `.env.local` was pasted into a chat transcript. Create a second secret key in the Supabase dashboard, update `.env.local`, then revoke the original.
