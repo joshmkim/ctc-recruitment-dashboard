@@ -30,17 +30,34 @@ There are two privilege levels:
 
 - **Framework:** Next.js 16 (App Router)
 - **Language:** TypeScript (strict mode)
-- **UI:** React 19
-- **Styling:** Tailwind CSS v4
+- **UI:** React 19, shadcn/ui components built on Base UI (not Radix)
+- **Styling:** Tailwind CSS v4, light mode only
 - **Linting:** ESLint 9 (`eslint-config-next`)
-- **Database:** Not yet chosen — the app requires persistence for candidates, notes, and scores.
-- **Auth:** Not yet chosen — required to distinguish regular vs. admin users.
+- **Database:** Supabase (Postgres). Reached only from Server Actions using a secret key held in `SUPABASE_SECRET_KEY`. RLS is enabled on every table with no policies, so the publishable key grants nothing. Never import `lib/supabase.ts` from a client component.
+- **Auth:** Not yet chosen — required to distinguish regular vs. admin users. Graders currently identify themselves with an unverified name picker stored in `localStorage`.
+
+## Brand
+
+Colours are sampled from `public/CTC_Logo_2017.png` and defined once in `app/globals.css`:
+
+- `#41B649` bright green (`--brand`) — accents, focus rings, progress dots
+- `#166232` forest green (`--brand-dark`, and `--primary`) — filled surfaces and text on white
+- `#F8F9FB` off-white (`--background`)
+
+White text on the bright green is only 2.6:1, so filled elements use the forest green (7.5:1). Keep that split when adding UI.
 
 ## Project Layout
 
-- `app/` — Next.js App Router routes, layouts, and pages (`app/page.tsx`, `app/layout.tsx`, `app/globals.css`).
+- `app/` — Next.js App Router routes, layouts, and pages.
+- `components/` — shared components; `components/ui/` is shadcn-generated.
+- `lib/` — data access. `lib/actions/` holds Server Actions, `lib/applications.ts` is the applicant source (fixture today, Google Sheets later).
+- `supabase/migrations/` — SQL migrations, run manually against the project.
 - `public/` — Static assets.
 - Path alias: `@/*` maps to the project root (`./*`).
+
+## Outstanding Work
+
+`TODO.md` tracks deferred features and undecided questions. Read it before starting anything substantial, and delete entries as they are completed.
 
 ## Development Commands
 

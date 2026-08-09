@@ -1,26 +1,84 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-geist-sans);
+  --color-brand: var(--brand);
+  --color-brand-dark: var(--brand-dark);
+  --color-brand-soft: var(--brand-soft);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Palette sampled from public/CTC_Logo_2017.png: #41B649, #166232, #F8F9FB.
+   White on #41B649 is only 2.6:1, so the bright green is reserved for accents,
+   rings and dots, while filled surfaces use #166232 (7.5:1 on white). */
+:root {
+  --brand: #41b649;
+  --brand-dark: #166232;
+  --brand-soft: #eaf6eb;
+
+  --background: #f8f9fb;
+  --foreground: #0f1c14;
+  --card: #ffffff;
+  --card-foreground: #0f1c14;
+  --popover: #ffffff;
+  --popover-foreground: #0f1c14;
+  --primary: #166232;
+  --primary-foreground: #ffffff;
+  --secondary: #eaf6eb;
+  --secondary-foreground: #166232;
+  --muted: #f1f3f2;
+  --muted-foreground: #5b6b60;
+  --accent: #eaf6eb;
+  --accent-foreground: #166232;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e2e7e3;
+  --input: #dde3de;
+  --ring: #41b649;
+  --radius: 1rem;
+}
+
+/* Light mode only. The `dark` variant above is scoped to a `.dark` ancestor
+   that never exists, so the dark: utilities inside shadcn components stay inert
+   rather than firing on the OS colour-scheme preference. */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }
