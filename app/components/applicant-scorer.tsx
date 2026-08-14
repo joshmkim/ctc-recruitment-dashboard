@@ -186,7 +186,10 @@ export function ApplicantScorer({
                 value={question.id}
                 className={cn(
                   "h-auto flex-none gap-2 rounded-xl border border-border bg-card px-3 py-2",
-                  "data-active:border-primary data-active:bg-primary data-active:text-primary-foreground",
+                  // Weight and a coloured border mark the active tab, rather than
+                  // reversing it out in white — which read as lighter than the
+                  // tabs beside it, the opposite of what selection should look like.
+                  "data-active:border-primary data-active:font-semibold data-active:text-brand-dark",
                 )}
               >
                 <span

@@ -2,7 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { PlusIcon, ShuffleIcon, UserMinusIcon, UserPlusIcon } from "lucide-react";
+import {
+  Loader2Icon,
+  PlusIcon,
+  ShuffleIcon,
+  UserMinusIcon,
+  UserPlusIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -19,25 +25,58 @@ import {
   addGraderAsAdmin,
   autoAssign,
   deactivateAndRedistribute,
+  previewAutoAssign,
   reactivateGrader,
+  type AutoAssignPreview,
 } from "@/lib/actions/admin";
 import type { Grader } from "@/lib/actions/graders";
+import { GRADERS_PER_APPLICANT } from "@/lib/grading";
 
 export type GraderProgress = Grader & {
   assigned: number;
   graded: number;
 };
 
+function PreviewRow({
+  label,
+  value,
+  warn,
+}: {
+  label: string;
+  value: number;
+  warn?: boolean;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={
+          warn
+            ? "font-medium tabular-nums text-destructive"
+            : "font-medium tabular-nums"
+        }
+      >
+        {value}
+      </span>
+    </li>
+  );
+}
+
 export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
   const router = useRouter();
   const [newName, setNewName] = useState("");
-  const [perApplicant, setPerApplicant] = useState("2");
   const [pending, startTransition] = useTransition();
   const [deactivating, setDeactivating] = useState<GraderProgress | null>(null);
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [preview, setPreview] = useState<AutoAssignPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const active = graders.filter((grader) => grader.is_active);
   const selectedTargetSet = new Set(selectedTargets);
+
+  // Two graders on one applicant have to be two different people.
+  const enoughGraders = active.length >= GRADERS_PER_APPLICANT;
 
   function run(task: () => Promise<void>, fallback: string) {
     startTransition(async () => {
@@ -60,16 +99,36 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
     }, "Could not add grader.");
   }
 
-  function assignAutomatically() {
+  async function openAutoAssign() {
+    setAssignOpen(true);
+    setPreview(null);
+    setPreviewError(null);
+    try {
+      setPreview(await previewAutoAssign());
+    } catch {
+      // Production masks server action messages, so there is nothing useful to
+      // pass along here.
+      setPreviewError("Could not work out what would change. Try again.");
+    }
+  }
+
+  function confirmAutoAssign() {
     run(async () => {
-      const result = await autoAssign(Number(perApplicant));
-      toast.success(
-        result.shortfall
-          ? `Assigned ${result.assigned}. ${result.shortfall} assignment slots could not be filled.`
-          : result.assigned
-            ? `Assigned ${result.assigned} grading slots.`
-            : "Everyone is already assigned.",
-      );
+      const result = await autoAssign();
+      setAssignOpen(false);
+
+      const parts = [
+        result.assigned
+          ? `Assigned ${result.assigned} grading slot${result.assigned === 1 ? "" : "s"}.`
+          : "Nothing to assign — everyone was already covered.",
+      ];
+      if (result.skipped) {
+        parts.push(`${result.skipped} already existed and were left alone.`);
+      }
+      if (result.shortfall) {
+        parts.push(`${result.shortfall} could not be filled.`);
+      }
+      toast.success(parts.join(" "));
     }, "Could not auto-assign graders.");
   }
 
@@ -117,22 +176,18 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
         <section className="rounded-2xl border border-brand/35 bg-brand-soft p-5">
           <h2 className="font-heading font-semibold text-brand-dark">Auto-assign</h2>
           <p className="mt-1 text-sm text-secondary-foreground">
-            Top up every applicant without replacing manual assignments.
+            Give every applicant {GRADERS_PER_APPLICANT} graders, without replacing
+            manual assignments.
           </p>
           <div className="mt-3 flex items-center gap-2">
-            <Input
-              className="w-20 bg-card"
-              type="number"
-              min="1"
-              max="20"
-              value={perApplicant}
-              onChange={(event) => setPerApplicant(event.target.value)}
-              aria-label="Graders per applicant"
-            />
-            <span className="text-sm text-secondary-foreground">per applicant</span>
-            <Button onClick={assignAutomatically} disabled={pending || !active.length}>
+            <Button onClick={openAutoAssign} disabled={pending || !enoughGraders}>
               <ShuffleIcon /> Assign
             </Button>
+            {!enoughGraders ? (
+              <span className="text-sm text-secondary-foreground">
+                Needs {GRADERS_PER_APPLICANT} active graders.
+              </span>
+            ) : null}
           </div>
         </section>
       </div>
@@ -190,6 +245,103 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
         })}
       </section>
 
+      <Dialog
+        open={assignOpen}
+        onOpenChange={(open) => {
+          if (!open && !pending) setAssignOpen(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Assign {GRADERS_PER_APPLICANT} graders to every applicant?
+            </DialogTitle>
+            <DialogDescription>
+              This only adds assignments. Nothing already assigned or already
+              submitted is changed or removed.
+            </DialogDescription>
+          </DialogHeader>
+
+          {previewError ? (
+            <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+              {previewError}
+            </p>
+          ) : !preview ? (
+            <p className="py-2 text-sm text-muted-foreground">
+              Working out what would change...
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {preview.gradersStarted > 0 ? (
+                <p className="rounded-lg border border-brand/40 bg-brand-soft px-3 py-2.5 text-sm text-secondary-foreground">
+                  Grading is already under way —{" "}
+                  <span className="font-medium">
+                    {preview.gradersStarted} grader
+                    {preview.gradersStarted === 1 ? " has" : "s have"} submitted{" "}
+                    {preview.submittedScores} score
+                    {preview.submittedScores === 1 ? "" : "s"}
+                  </span>
+                  . Those stay as they are, but this will add to people&apos;s
+                  queues while they work.
+                </p>
+              ) : null}
+
+              <ul className="flex flex-col gap-1.5">
+                <PreviewRow
+                  label="New assignments to create"
+                  value={preview.toCreate}
+                />
+                <PreviewRow
+                  label="Graders receiving new work"
+                  value={preview.gradersAffected}
+                />
+                <PreviewRow label="Active graders" value={preview.activeGraders} />
+                {preview.shortfall ? (
+                  <PreviewRow
+                    label="Slots that cannot be filled"
+                    value={preview.shortfall}
+                    warn
+                  />
+                ) : null}
+              </ul>
+
+              {preview.toCreate === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Every applicant already has {GRADERS_PER_APPLICANT} graders, so
+                  there is nothing to do.
+                </p>
+              ) : null}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="lg"
+              disabled={pending}
+              onClick={() => setAssignOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="lg"
+              disabled={pending || !preview || preview.toCreate === 0}
+              onClick={confirmAutoAssign}
+            >
+              {pending ? (
+                <>
+                  <Loader2Icon className="animate-spin" /> Assigning...
+                </>
+              ) : (
+                <>
+                  <ShuffleIcon /> Assign
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(deactivating)} onOpenChange={(open) => !open && setDeactivating(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -235,12 +387,20 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeactivating(null)}>Cancel</Button>
+            <Button variant="outline" disabled={pending} onClick={() => setDeactivating(null)}>
+              Cancel
+            </Button>
             <Button
               disabled={!selectedTargets.length || pending}
               onClick={redistribute}
             >
-              Inactivate and redistribute
+              {pending ? (
+                <>
+                  <Loader2Icon className="animate-spin" /> Redistributing...
+                </>
+              ) : (
+                "Inactivate and redistribute"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

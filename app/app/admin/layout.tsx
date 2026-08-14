@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { UsersRoundIcon, ScaleIcon } from "lucide-react";
+import { UsersRoundIcon, ScaleIcon, FileUpIcon } from "lucide-react";
 
 import { requireAdmin } from "@/lib/admin-auth";
 
@@ -20,6 +20,13 @@ export default async function AdminLayout({
           </h1>
         </div>
         <nav className="flex rounded-xl bg-muted p-1">
+          <Link
+            href="/admin/applicants"
+            className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-card hover:text-foreground"
+          >
+            <FileUpIcon className="size-4" />
+            Applicants
+          </Link>
           <Link
             href="/admin/graders"
             className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-card hover:text-foreground"

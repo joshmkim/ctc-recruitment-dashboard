@@ -15,42 +15,34 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  assignGrader,
-  unassignGrader,
-  type Assignment,
-} from "@/lib/actions/assignments";
-import type { SubmittedScore } from "@/lib/actions/scores";
+import { assignGrader, unassignGrader } from "@/lib/actions/assignments";
+import { GRADERS_PER_APPLICANT } from "@/lib/grading";
 import { QUESTIONS } from "@/lib/questions";
 
-type ApplicantRow = {
+/** Already reduced server-side: the graders on this applicant and how many have
+ *  submitted, rather than the assignment and score tables in full. */
+export type ApplicantRow = {
   id: string;
   name: string;
   submittedAt: string;
+  assignedGraderIds: string[];
+  scoreCount: number;
 };
 
 export function ApplicantList({
   applicants,
-  assignments,
-  submitted,
   canManageAssignments,
+  showingEveryone,
 }: {
   applicants: ApplicantRow[];
-  assignments: Assignment[];
-  submitted: SubmittedScore[];
   canManageAssignments: boolean;
+  /** True on the admin view. Otherwise `applicants` is already just the
+   *  signed-in grader's queue, scoped on the server. */
+  showingEveryone: boolean;
 }) {
   const { graders, grader } = useGrader();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-
-  const myQueue = grader
-    ? applicants.filter((applicant) =>
-        assignments.some(
-          (a) => a.applicant_id === applicant.id && a.grader_id === grader.id,
-        ),
-      )
-    : [];
 
   function run(action: () => Promise<void>, failure: string) {
     startTransition(async () => {
@@ -65,11 +57,13 @@ export function ApplicantList({
 
   return (
     <div className="flex flex-col gap-6">
-      <QueueCard
-        count={myQueue.length}
-        firstId={myQueue[0]?.id}
-        graderName={grader?.name}
-      />
+      {showingEveryone ? null : (
+        <QueueCard
+          count={applicants.length}
+          firstId={applicants[0]?.id}
+          graderName={grader?.name}
+        />
+      )}
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         <div className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border bg-muted/40 px-5 py-3 text-xs font-medium tracking-wide text-muted-foreground uppercase sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
@@ -78,22 +72,29 @@ export function ApplicantList({
           <span>Scores</span>
         </div>
 
+        {applicants.length === 0 ? (
+          <p className="px-5 py-8 text-center text-sm text-muted-foreground">
+            {showingEveryone
+              ? "No applications have been imported yet."
+              : grader
+                ? "Nothing is assigned to you yet."
+                : "Pick your name in the top right to see your applications."}
+          </p>
+        ) : null}
+
         {applicants.map((applicant) => {
-          const assigned = assignments
-            .filter((a) => a.applicant_id === applicant.id)
-            .map((a) => graders.find((g) => g.id === a.grader_id))
+          const assigned = applicant.assignedGraderIds
+            .map((id) => graders.find((g) => g.id === id))
             .filter((g) => g !== undefined);
 
           const unassigned = graders.filter(
             (g) =>
               g.is_active &&
               g.id !== grader?.id &&
-              !assigned.some((a) => a.id === g.id),
+              !applicant.assignedGraderIds.includes(g.id),
           );
-
-          const scoreCount = submitted.filter(
-            (s) => s.applicant_id === applicant.id,
-          ).length;
+          // Both slots taken means assignGrader would refuse, so do not offer it.
+          const hasRoom = applicant.assignedGraderIds.length < GRADERS_PER_APPLICANT;
 
           return (
             <div
@@ -142,7 +143,7 @@ export function ApplicantList({
                   </span>
                 ))}
 
-                {canManageAssignments && unassigned.length > 0 ? (
+                {canManageAssignments && hasRoom && unassigned.length > 0 ? (
                   <Select
                     items={unassigned.map((g) => ({
                       label: g.name,
@@ -176,9 +177,9 @@ export function ApplicantList({
               </div>
 
               <span className="justify-self-end text-sm tabular-nums text-muted-foreground">
-                {scoreCount > 0 ? (
+                {applicant.scoreCount > 0 ? (
                   <span className="rounded-full bg-primary/10 px-2.5 py-1 font-medium text-primary">
-                    {scoreCount}
+                    {applicant.scoreCount}
                   </span>
                 ) : (
                   <span className="text-muted-foreground/60">—</span>
@@ -191,7 +192,10 @@ export function ApplicantList({
 
       <p className="text-xs text-muted-foreground">
         Scores counts how many graders have submitted all {QUESTIONS.length}{" "}
-        questions. Assignment is a label to divide the work, not a permission.
+        questions.{" "}
+        {showingEveryone
+          ? "Every application is listed because you are signed in as an admin."
+          : "Only the applications assigned to you are listed. The other grader on each one is named beside it."}
       </p>
     </div>
   );

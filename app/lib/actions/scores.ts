@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { supabase } from "@/lib/supabase";
+import { selectAllRows, selectRowsIn, supabase } from "@/lib/supabase";
 import { isScoreValue, type ScoreValue } from "@/lib/scores";
 
 export type CompleteScores = Record<
@@ -15,11 +15,27 @@ export type SubmittedScore = {
   grader_id: string;
 };
 
-/** Which applicants each grader has already submitted, for the homepage counts. */
+/** Which applicants each grader has already submitted, for the admin counts. */
 export async function listSubmittedScores(): Promise<SubmittedScore[]> {
-  const { data, error } = await supabase
-    .from("written_scores")
-    .select("applicant_id, grader_id");
+  const { data, error } = await selectAllRows<SubmittedScore>(
+    "written_scores",
+    "applicant_id, grader_id",
+  );
+
+  if (error) throw new Error(`Could not load scores: ${error.message}`);
+  return data ?? [];
+}
+
+/** The same counts, for one grader's queue rather than every applicant. */
+export async function listSubmittedScoresForApplicants(
+  applicantIds: string[],
+): Promise<SubmittedScore[]> {
+  const { data, error } = await selectRowsIn<SubmittedScore>(
+    "written_scores",
+    "applicant_id, grader_id",
+    "applicant_id",
+    applicantIds,
+  );
 
   if (error) throw new Error(`Could not load scores: ${error.message}`);
   return data ?? [];

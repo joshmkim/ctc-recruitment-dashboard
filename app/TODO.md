@@ -4,22 +4,22 @@ Deferred work and unresolved decisions for the CTC Recruitment Dashboard. Everyt
 
 ## Deferred features
 
-### Google Sheets ingestion
+### Applicant data that is imported but not shown
 
-The written applications currently come from a hardcoded fixture in `lib/applications.ts`. That file is the only thing that needs to change to swap in the real data, but a few things need deciding first:
+The importer captures every column of the form. Only the five scored answers and
+the applicant's name are on screen so far. Still waiting for somewhere to live:
+student id, majors, minors, graduation year, role, pronouns, other links, and
+the classes-and-commitments answer (stored as `commitments`, deliberately not a
+scored question).
 
-- Confirm the Google Form collects the submitter's email. The schema uses email as `applicant_id` because it's the only durable key a form provides — row numbers shift if the sheet is ever sorted or edited.
-- Map the five question columns in the sheet to `Q1`–`Q5` in `lib/questions.ts`.
-- Choose an access method. A Google service account with the sheet shared to it is the usual approach and avoids an OAuth flow.
-- Decide refresh cadence: read the sheet on every page load, or cache it and revalidate.
+`gender` and `race_ethnicity` are a separate case. They are imported, and they
+should stay off the scoring screen: demographics next to an essay somebody is
+about to score introduce bias into an individual admissions decision for no
+upside. Aggregate them for admins if they are wanted at all.
 
 ### Score level descriptions
 
 `lib/scores.ts` defines the 1–4 scale as `{ value, label, description }` with labels Weak, Satisfactory, Good, Strong. The `description` fields are placeholders. Fill them in with the rubric copy; the UI already renders a description slot under the selector when a score is picked.
-
-### Right-hand panel
-
-The scoring screen is a two-column layout. The right column is an intentional empty state awaiting the additional views you mentioned. Nothing else depends on it.
 
 ### The rest of the dashboard
 
@@ -29,6 +29,14 @@ The scoring screen is a two-column layout. The right column is an intentional em
 - **Interview deliberations** — the same aggregate-and-decide view over interview scores, and some way to weigh written against interview when the two disagree.
 
 ## Open decisions
+
+### `getApplicants()` reads whole applications for every caller
+
+It selects all columns, including the five essays, and both the dashboard and the
+grading queue only want ids and names. At a few hundred applicants that is a
+couple of megabytes per page load. Fine for now, and deliberately not optimised
+into a second read path before it is a real problem, but it is the first thing to
+look at if the dashboard feels slow.
 
 ### Grader identity is unverified
 

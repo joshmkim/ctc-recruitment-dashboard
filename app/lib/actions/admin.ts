@@ -4,10 +4,19 @@ import { revalidatePath } from "next/cache";
 
 import { requireAdmin } from "@/lib/admin-auth";
 import { getApplicants } from "@/lib/applications";
-import { supabase } from "@/lib/supabase";
+import {
+  ASSIGNMENT_SLOTS,
+  GRADERS_PER_APPLICANT,
+  type AssignmentSlot,
+} from "@/lib/grading";
+import { selectAllRows, supabase } from "@/lib/supabase";
 import { addGrader } from "@/lib/actions/graders";
 
-type AssignmentRow = { applicant_id: string; grader_id: string };
+type AssignmentRow = {
+  applicant_id: string;
+  grader_id: string;
+  slot: AssignmentSlot;
+};
 type GraderRow = { id: string; name: string; is_active: boolean };
 
 function refreshAdmin() {
@@ -16,10 +25,12 @@ function refreshAdmin() {
 }
 
 async function loadAssignmentState() {
+  // Assignment balancing counts each grader's existing load, so a partial read
+  // would pile new work onto graders who already have plenty.
   const [{ data: graders, error: graderError }, { data: assignments, error: assignmentError }] =
     await Promise.all([
       supabase.from("graders").select("id, name, is_active").order("name"),
-      supabase.from("assignments").select("applicant_id, grader_id"),
+      selectAllRows<AssignmentRow>("assignments", "applicant_id, grader_id, slot"),
     ]);
 
   if (graderError) throw new Error(`Could not load graders: ${graderError.message}`);
@@ -27,7 +38,7 @@ async function loadAssignmentState() {
 
   return {
     graders: (graders ?? []) as GraderRow[],
-    assignments: (assignments ?? []) as AssignmentRow[],
+    assignments: assignments ?? [],
   };
 }
 
@@ -65,48 +76,144 @@ function leastLoadedEligible(
     )[0];
 }
 
-export async function autoAssign(gradersPerApplicant: number) {
+/** Fills whichever of the two slots each applicant is missing, without touching
+ *  existing rows. Pure, so the preview and the write agree on what would happen. */
+function planAssignments(
+  applicants: Array<{ id: string }>,
+  graders: GraderRow[],
+  assignments: AssignmentRow[],
+) {
+  const inserts: AssignmentRow[] = [];
+  const current = [...assignments];
+  let shortfall = 0;
+
+  for (const applicant of applicants) {
+    const filled = new Set(
+      current
+        .filter((assignment) => assignment.applicant_id === applicant.id)
+        .map((assignment) => assignment.slot),
+    );
+
+    for (const slot of ASSIGNMENT_SLOTS) {
+      if (filled.has(slot)) continue;
+
+      const target = leastLoadedEligible(graders, current, applicant.id);
+      if (!target) {
+        // Eligibility only excludes graders already on this applicant, so
+        // finding nobody for one slot means nobody for the rest either.
+        shortfall += GRADERS_PER_APPLICANT - filled.size;
+        break;
+      }
+
+      const assignment = { applicant_id: applicant.id, grader_id: target.id, slot };
+      inserts.push(assignment);
+      current.push(assignment);
+      filled.add(slot);
+    }
+  }
+
+  return { inserts, shortfall };
+}
+
+/**
+ * Inserts assignments, skipping any that already exist.
+ *
+ * A plain `insert` of several rows is one statement, so a single duplicate key
+ * aborts the whole batch and writes nothing — which is what happened when two
+ * admins assigned at once. Returns the rows actually created, since
+ * `on conflict do nothing` only returns those.
+ *
+ * The conflict target has to be named. Left out, PostgREST arbitrates on the
+ * primary key, which is a generated uuid that never collides, so nothing would
+ * be skipped. `(applicant_id, slot)` is the collision two admins running this at
+ * once produce: they plan the same empty slots from the same starting state.
+ *
+ * A conflict on `(applicant_id, grader_id)` instead — the same grader landing in
+ * a different slot — is not skipped and still aborts the batch. It needs one
+ * admin's write to land between another's read and write, so it is reported
+ * rather than handled; assignment is idempotent, so retrying settles it.
+ */
+async function insertNewAssignments(inserts: AssignmentRow[]) {
+  const { data, error } = await supabase
+    .from("assignments")
+    .upsert(inserts, {
+      onConflict: "applicant_id,slot",
+      ignoreDuplicates: true,
+    })
+    .select("applicant_id");
+
+  if (error?.code === "23505") {
+    throw new Error(
+      "Another admin was assigning at the same time. Nothing was written — reload and try again.",
+    );
+  }
+
+  return { created: data?.length ?? 0, error };
+}
+
+export type AutoAssignPreview = {
+  toCreate: number;
+  shortfall: number;
+  activeGraders: number;
+  gradersAffected: number;
+  submittedScores: number;
+  gradersStarted: number;
+};
+
+/** What `autoAssign` would do, so the confirmation can show it before writing. */
+export async function previewAutoAssign(): Promise<AutoAssignPreview> {
   await requireAdmin();
 
-  if (!Number.isInteger(gradersPerApplicant) || gradersPerApplicant < 1 || gradersPerApplicant > 20) {
-    throw new Error("Choose between 1 and 20 graders per applicant.");
-  }
+  const [applicants, { graders, assignments }, { data: submitted, error }] = await Promise.all([
+    getApplicants(),
+    loadAssignmentState(),
+    selectAllRows<{ applicant_id: string; grader_id: string }>(
+      "written_scores",
+      "applicant_id, grader_id",
+    ),
+  ]);
+  if (error) throw new Error(`Could not load submitted scores: ${error.message}`);
+
+  const { inserts, shortfall } = planAssignments(applicants, graders, assignments);
+
+  return {
+    toCreate: inserts.length,
+    shortfall,
+    activeGraders: graders.filter((grader) => grader.is_active).length,
+    gradersAffected: new Set(inserts.map((assignment) => assignment.grader_id)).size,
+    submittedScores: (submitted ?? []).length,
+    gradersStarted: new Set((submitted ?? []).map((score) => score.grader_id)).size,
+  };
+}
+
+export async function autoAssign() {
+  await requireAdmin();
 
   const [applicants, { graders, assignments }] = await Promise.all([
     getApplicants(),
     loadAssignmentState(),
   ]);
   const activeCount = graders.filter((grader) => grader.is_active).length;
-  if (!activeCount) throw new Error("Add or reactivate at least one grader first.");
-
-  const inserts: AssignmentRow[] = [];
-  const current = [...assignments];
-  let shortfall = 0;
-
-  for (const applicant of applicants) {
-    while (
-      current.filter((assignment) => assignment.applicant_id === applicant.id).length <
-      gradersPerApplicant
-    ) {
-      const target = leastLoadedEligible(graders, current, applicant.id);
-      if (!target) {
-        shortfall += 1;
-        break;
-      }
-      const assignment = { applicant_id: applicant.id, grader_id: target.id };
-      inserts.push(assignment);
-      current.push(assignment);
-    }
+  if (activeCount < GRADERS_PER_APPLICANT) {
+    throw new Error(
+      `Every applicant needs ${GRADERS_PER_APPLICANT} different graders, so at least ${GRADERS_PER_APPLICANT} must be active.`,
+    );
   }
 
+  const { inserts, shortfall } = planAssignments(applicants, graders, assignments);
+
+  let assigned = 0;
   if (inserts.length) {
-    const { error } = await supabase.from("assignments").insert(inserts);
+    const { created, error } = await insertNewAssignments(inserts);
     if (error) throw new Error(`Could not assign graders: ${error.message}`);
+    assigned = created;
   }
 
   refreshAdmin();
   return {
-    assigned: inserts.length,
+    assigned,
+    // Non-zero when a concurrent admin, or a second click, got there first.
+    skipped: inserts.length - assigned,
     shortfall,
     activeGraders: activeCount,
   };
@@ -123,9 +230,14 @@ export async function deactivateAndRedistribute(
 ) {
   await requireAdmin();
 
+  // A missed score row here would look like unfinished work and get reassigned,
+  // so this read has to cover every submission.
   const [{ graders, assignments }, { data: submitted, error: scoreError }] = await Promise.all([
     loadAssignmentState(),
-    supabase.from("written_scores").select("applicant_id, grader_id"),
+    selectAllRows<{ applicant_id: string; grader_id: string }>(
+      "written_scores",
+      "applicant_id, grader_id",
+    ),
   ]);
   if (scoreError) throw new Error(`Could not load submitted scores: ${scoreError.message}`);
 
@@ -159,8 +271,15 @@ export async function deactivateAndRedistribute(
       assignment.applicant_id,
       new Set(validTargets.map((item) => item.id)),
     );
+    // The outgoing row is deleted below, so the replacement inherits its slot
+    // and the applicant keeps both graders. When there is no eligible target the
+    // slot is left empty, which the deliberation view reports as understaffed.
     if (!target) continue;
-    const replacement = { applicant_id: assignment.applicant_id, grader_id: target.id };
+    const replacement = {
+      applicant_id: assignment.applicant_id,
+      grader_id: target.id,
+      slot: assignment.slot,
+    };
     inserts.push(replacement);
     current.push(replacement);
   }
@@ -183,16 +302,17 @@ export async function deactivateAndRedistribute(
     if (deleteError) throw new Error(`Could not remove old assignments: ${deleteError.message}`);
   }
 
+  let moved = 0;
   if (inserts.length) {
-    const { error: insertError } = await supabase.from("assignments").insert(inserts);
+    const { created, error: insertError } = await insertNewAssignments(inserts);
     if (insertError) throw new Error(`Could not redistribute assignments: ${insertError.message}`);
+    moved = created;
   }
 
   refreshAdmin();
   return {
-    moved: inserts.length,
-    notMoved: ungraded.length - inserts.length,
-    preservedSubmitted: assignments.length - ungraded.length,
+    moved,
+    notMoved: ungraded.length - moved,
   };
 }
 

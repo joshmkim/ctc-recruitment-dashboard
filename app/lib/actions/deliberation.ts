@@ -3,7 +3,9 @@
 import { requireAdmin } from "@/lib/admin-auth";
 import { getApplicants } from "@/lib/applications";
 import type { Decision } from "@/lib/actions/admin";
-import { supabase } from "@/lib/supabase";
+import { GRADERS_PER_APPLICANT, type AssignmentSlot } from "@/lib/grading";
+import { QUESTION_IDS } from "@/lib/questions";
+import { selectAllRows, supabase } from "@/lib/supabase";
 
 type ScoreRow = {
   applicant_id: string;
@@ -15,41 +17,67 @@ type ScoreRow = {
   q5_score: number;
 };
 
+type AssignmentRow = {
+  applicant_id: string;
+  grader_id: string;
+  slot: AssignmentSlot;
+};
+
+export type GraderSubmission = {
+  slot: AssignmentSlot;
+  graderId: string;
+  graderName: string;
+  submitted: boolean;
+  /** Empty until this grader submits. */
+  values: number[];
+  overall: number;
+};
+
 export type DeliberationApplicant = {
   id: string;
   name: string;
+  /** One entry per filled slot, in slot order, so the two graders keep the same
+   *  position across renders. Shorter than `GRADERS_PER_APPLICANT` only when an
+   *  applicant is missing an assignment, which the view reports as a problem. */
+  graders: GraderSubmission[];
   assignedCount: number;
   scoredCount: number;
-  complete: boolean;
+  /** Both slots assigned and both graders submitted — safe to deliberate on. */
+  ready: boolean;
   questionAverages: number[];
+  /** How far apart the two graders are on each question. Empty until both
+   *  submit. A large gap on one question is the signal worth discussing, and it
+   *  disappears into an average of averages. */
+  questionGaps: number[];
+  maxGap: number;
   overallAverage: number;
-  spread: number;
   decision: Decision | null;
-  scores: Array<{
-    graderId: string;
-    graderName: string;
-    values: number[];
-    overall: number;
-  }>;
-  awaitingGraders: Array<{
-    graderId: string;
-    graderName: string;
-  }>;
 };
 
 const average = (values: number[]) =>
   values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 
+const scoreValues = (row: ScoreRow) => [
+  row.q1_score,
+  row.q2_score,
+  row.q3_score,
+  row.q4_score,
+  row.q5_score,
+];
+
 export async function getDeliberationApplicants(): Promise<DeliberationApplicant[]> {
   await requireAdmin();
 
+  // Averages and coverage are computed from every row, so a partial read here
+  // would quietly change the numbers the club deliberates on.
   const [applicants, assignmentsResult, scoresResult, gradersResult, decisionsResult] =
     await Promise.all([
       getApplicants(),
-      supabase.from("assignments").select("applicant_id, grader_id"),
-      supabase
-        .from("written_scores")
-        .select("applicant_id, grader_id, q1_score, q2_score, q3_score, q4_score, q5_score"),
+      selectAllRows<AssignmentRow>("assignments", "applicant_id, grader_id, slot"),
+      selectAllRows<ScoreRow>(
+        "written_scores",
+        "applicant_id, grader_id, q1_score, q2_score, q3_score, q4_score, q5_score",
+      ),
       supabase.from("graders").select("id, name"),
       supabase.from("decisions").select("applicant_id, decision"),
     ]);
@@ -58,69 +86,68 @@ export async function getDeliberationApplicants(): Promise<DeliberationApplicant
     if (result.error) throw new Error(`Could not load deliberation data: ${result.error.message}`);
   }
 
-  const assignments = assignmentsResult.data ?? [];
-  const scores = (scoresResult.data ?? []) as ScoreRow[];
   const graderNames = new Map((gradersResult.data ?? []).map((grader) => [grader.id, grader.name]));
   const decisions = new Map(
     (decisionsResult.data ?? []).map((item) => [item.applicant_id, item.decision as Decision]),
   );
 
+  const slotsByApplicant = new Map<string, AssignmentRow[]>();
+  for (const assignment of assignmentsResult.data ?? []) {
+    const existing = slotsByApplicant.get(assignment.applicant_id);
+    if (existing) existing.push(assignment);
+    else slotsByApplicant.set(assignment.applicant_id, [assignment]);
+  }
+
+  // Assignments decide whose score counts. Grader identity is unverified, so a
+  // score can arrive from someone who was never assigned; keying off the
+  // assignment keeps a stray row out of the averages.
+  const scoresByAssignment = new Map(
+    (scoresResult.data ?? []).map((score) => [`${score.applicant_id}:${score.grader_id}`, score]),
+  );
+
   return applicants.map((applicant) => {
-    const applicantAssignments = assignments.filter(
-      (assignment) => assignment.applicant_id === applicant.id,
+    const slots = [...(slotsByApplicant.get(applicant.id) ?? [])].sort(
+      (left, right) => left.slot - right.slot,
     );
-    const applicantScores = scores.filter((score) => score.applicant_id === applicant.id);
-    const questionAverages = [0, 1, 2, 3, 4].map((index) =>
-      average(
-        applicantScores.map(
-          (score) => [score.q1_score, score.q2_score, score.q3_score, score.q4_score, score.q5_score][index],
-        ),
-      ),
-    );
-    const perGrader = applicantScores.map((score) => {
-      const values = [
-        score.q1_score,
-        score.q2_score,
-        score.q3_score,
-        score.q4_score,
-        score.q5_score,
-      ];
+
+    const graders: GraderSubmission[] = slots.map((assignment) => {
+      const score = scoresByAssignment.get(`${applicant.id}:${assignment.grader_id}`);
+      const values = score ? scoreValues(score) : [];
       return {
-        graderId: score.grader_id,
-        graderName: graderNames.get(score.grader_id) ?? "Unknown grader",
+        slot: assignment.slot,
+        graderId: assignment.grader_id,
+        graderName: graderNames.get(assignment.grader_id) ?? "Unknown grader",
+        submitted: Boolean(score),
         values,
         overall: average(values),
       };
     });
-    const individualOverall = perGrader.map((score) => score.overall);
-    const awaitingGraders = applicantAssignments
-      .filter(
-        (assignment) =>
-          !applicantScores.some((score) => score.grader_id === assignment.grader_id),
-      )
-      .map((assignment) => ({
-        graderId: assignment.grader_id,
-        graderName: graderNames.get(assignment.grader_id) ?? "Unknown grader",
-      }));
+
+    const submitted = graders.filter((grader) => grader.submitted);
+    const questionAverages = QUESTION_IDS.map((_, index) =>
+      average(submitted.map((grader) => grader.values[index])),
+    );
+    const questionGaps =
+      submitted.length === GRADERS_PER_APPLICANT
+        ? QUESTION_IDS.map((_, index) =>
+            Math.abs(submitted[0].values[index] - submitted[1].values[index]),
+          )
+        : [];
 
     return {
       id: applicant.id,
       name: applicant.name,
-      assignedCount: applicantAssignments.length,
-      scoredCount: applicantScores.length,
-      complete:
-        applicantAssignments.length > 0 &&
-        applicantAssignments.every((assignment) =>
-          applicantScores.some((score) => score.grader_id === assignment.grader_id),
-        ),
+      graders,
+      assignedCount: slots.length,
+      scoredCount: submitted.length,
+      ready:
+        slots.length === GRADERS_PER_APPLICANT &&
+        submitted.length === GRADERS_PER_APPLICANT,
       questionAverages,
+      questionGaps,
+      maxGap: questionGaps.length ? Math.max(...questionGaps) : 0,
       overallAverage: average(questionAverages),
-      spread: individualOverall.length
-        ? Math.max(...individualOverall) - Math.min(...individualOverall)
-        : 0,
       decision: decisions.get(applicant.id) ?? null,
-      scores: perGrader,
-      awaitingGraders,
     };
   });
 }
