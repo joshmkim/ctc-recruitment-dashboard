@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ValuesRubric } from "@/components/values-rubric";
 import type { Assignment } from "@/lib/actions/assignments";
 import { getMyScores, submitScores } from "@/lib/actions/scores";
 import type { Applicant } from "@/lib/applications";
@@ -159,147 +160,156 @@ export function ApplicantScorer({
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <h1 className="flex items-baseline gap-3 font-heading text-2xl font-semibold tracking-tight text-brand-dark">
-        <span className="font-mono">{applicant.name}</span>
-        {applicant.profile.graduationYear ? (
-          <span className="text-muted-foreground">
-            {classYearLabel(applicant.profile.graduationYear)}
-          </span>
-        ) : null}
-      </h1>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Submitted{" "}
-          {new Date(applicant.submittedAt).toLocaleDateString(undefined, {
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          })}
-          {position >= 0 && myQueue.length > 0 ? (
-            <> · {position + 1} of {myQueue.length} assigned to you</>
-          ) : null}
-        </p>
-        <div className="flex items-center gap-2">
-          {alreadySubmitted ? (
-            <span className="rounded-full bg-brand-soft px-2.5 py-1 text-xs font-medium text-secondary-foreground">
-              Already submitted
+    // Essays on the left, values on the right. The left column is min-w-0 so a
+    // long unbroken line in an answer cannot push the values panel off screen.
+    <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,23rem)]">
+      <div className="flex min-w-0 flex-col gap-5">
+        <h1 className="flex items-baseline gap-3 font-heading text-2xl font-semibold tracking-tight text-brand-dark">
+          <span className="font-mono">{applicant.name}</span>
+          {applicant.profile.graduationYear ? (
+            <span className="text-muted-foreground">
+              {classYearLabel(applicant.profile.graduationYear)}
             </span>
           ) : null}
-          <span className="text-sm font-medium tabular-nums text-muted-foreground">
-            {scoredCount} of {QUESTIONS.length} scored
-          </span>
+        </h1>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            Submitted{" "}
+            {new Date(applicant.submittedAt).toLocaleDateString(undefined, {
+              day: "numeric",
+              month: "long",
+              year: "numeric",
+            })}
+            {position >= 0 && myQueue.length > 0 ? (
+              <> · {position + 1} of {myQueue.length} assigned to you</>
+            ) : null}
+          </p>
+          <div className="flex items-center gap-2">
+            {alreadySubmitted ? (
+              <span className="rounded-full bg-brand-soft px-2.5 py-1 text-xs font-medium text-secondary-foreground">
+                Already submitted
+              </span>
+            ) : null}
+            <span className="text-sm font-medium tabular-nums text-muted-foreground">
+              {scoredCount} of {QUESTIONS.length} scored
+            </span>
+          </div>
         </div>
-      </div>
 
-      {!grader ? (
-        <p className="rounded-xl border border-brand/40 bg-brand-soft px-4 py-3 text-sm text-secondary-foreground">
-          Pick your name in the top right before you start scoring.
-        </p>
-      ) : null}
+        {!grader ? (
+          <p className="rounded-xl border border-brand/40 bg-brand-soft px-4 py-3 text-sm text-secondary-foreground">
+            Pick your name in the top right before you start scoring.
+          </p>
+        ) : null}
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => setActiveTab(value as QuestionId)}
-      >
-        <TabsList variant="line" className="h-auto flex-wrap gap-1.5 p-0">
-          {QUESTIONS.map((question, index) => {
-            const scored = draft[question.id] !== null;
-            return (
-              <TabsTrigger
-                key={question.id}
-                value={question.id}
-                className={cn(
-                  "h-auto flex-none gap-2 rounded-xl border border-border bg-card px-3 py-2",
-                  // Weight and a coloured border mark the active tab, rather than
-                  // reversing it out in white — which read as lighter than the
-                  // tabs beside it, the opposite of what selection should look like.
-                  "data-active:border-primary data-active:font-semibold data-active:text-brand-dark",
-                )}
-              >
-                <span
-                  className={cn(
-                    "size-1.5 rounded-full transition-colors",
-                    scored
-                      ? "bg-brand group-data-active/tabs-list:bg-brand"
-                      : "bg-border",
-                  )}
-                  aria-hidden
-                />
-                Q{index + 1}
-                <span className="hidden text-xs opacity-70 sm:inline">
-                  {question.label}
-                </span>
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-
-        {QUESTIONS.map((question) => (
-          <TabsContent key={question.id} value={question.id}>
-            <article className="rounded-2xl border border-border bg-card p-6 sm:p-8">
-              <h2 className="mb-5 max-w-[68ch] font-heading text-base leading-relaxed font-semibold text-brand-dark">
-                {question.prompt}
-              </h2>
-              <div className="max-w-[68ch] space-y-4 text-[1.0625rem] leading-8 whitespace-pre-wrap text-foreground/90">
-                {applicant.responses[question.id]}
-              </div>
-            </article>
-          </TabsContent>
-        ))}
-      </Tabs>
-
-      <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-        <ScoreSelector
-          value={loaded ? draft[activeTab] : null}
-          onChange={(value) => setScore(activeTab, value)}
-          rubric={
-            QUESTIONS.find((question) => question.id === activeTab)?.rubric ??
-            QUESTIONS[0].rubric
-          }
-        />
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button
-          variant="outline"
-          size="lg"
-          disabled={!previous}
-          onClick={() =>
-            previous && router.push(`/score/${encodeURIComponent(previous.id)}`)
-          }
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as QuestionId)}
         >
-          <ArrowLeftIcon />
-          Previous
-        </Button>
+          <TabsList variant="line" className="h-auto flex-wrap gap-1.5 p-0">
+            {QUESTIONS.map((question, index) => {
+              const scored = draft[question.id] !== null;
+              return (
+                <TabsTrigger
+                  key={question.id}
+                  value={question.id}
+                  className={cn(
+                    "h-auto flex-none gap-2 rounded-xl border border-border bg-card px-3 py-2",
+                    // Weight and a coloured border mark the active tab, rather than
+                    // reversing it out in white — which read as lighter than the
+                    // tabs beside it, the opposite of what selection should look like.
+                    "data-active:border-primary data-active:font-semibold data-active:text-brand-dark",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "size-1.5 rounded-full transition-colors",
+                      scored
+                        ? "bg-brand group-data-active/tabs-list:bg-brand"
+                        : "bg-border",
+                    )}
+                    aria-hidden
+                  />
+                  Q{index + 1}
+                  <span className="hidden text-xs opacity-70 sm:inline">
+                    {question.label}
+                  </span>
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
 
-        <div className="flex items-center gap-2">
-          {next ? (
-            <Button
-              variant="ghost"
-              size="lg"
-              onClick={() => router.push(`/score/${encodeURIComponent(next.id)}`)}
-            >
-              Skip for now
-            </Button>
-          ) : null}
-          <Button
-            size="lg"
-            disabled={!grader || !complete || pending}
-            onClick={() => setConfirmOpen(true)}
-          >
-            {next ? "Submit and next" : "Submit and finish"}
-            <ArrowRightIcon />
-          </Button>
+          {QUESTIONS.map((question) => (
+            <TabsContent key={question.id} value={question.id}>
+              <article className="rounded-2xl border border-border bg-card p-6 sm:p-8">
+                <h2 className="mb-5 max-w-[68ch] font-heading text-base leading-relaxed font-semibold text-brand-dark">
+                  {question.prompt}
+                </h2>
+                <div className="max-w-[68ch] space-y-4 text-[1.0625rem] leading-8 whitespace-pre-wrap text-foreground/90">
+                  {applicant.responses[question.id]}
+                </div>
+              </article>
+            </TabsContent>
+          ))}
+        </Tabs>
+
+        <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+          <ScoreSelector
+            value={loaded ? draft[activeTab] : null}
+            onChange={(value) => setScore(activeTab, value)}
+            rubric={
+              QUESTIONS.find((question) => question.id === activeTab)?.rubric ??
+              QUESTIONS[0].rubric
+            }
+          />
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button
+            variant="outline"
+            size="lg"
+            disabled={!previous}
+            onClick={() =>
+              previous &&
+              router.push(`/score/${encodeURIComponent(previous.id)}`)
+            }
+          >
+            <ArrowLeftIcon />
+            Previous
+          </Button>
+
+          <div className="flex items-center gap-2">
+            {next ? (
+              <Button
+                variant="ghost"
+                size="lg"
+                onClick={() =>
+                  router.push(`/score/${encodeURIComponent(next.id)}`)
+                }
+              >
+                Skip for now
+              </Button>
+            ) : null}
+            <Button
+              size="lg"
+              disabled={!grader || !complete || pending}
+              onClick={() => setConfirmOpen(true)}
+            >
+              {next ? "Submit and next" : "Submit and finish"}
+              <ArrowRightIcon />
+            </Button>
+          </div>
+        </div>
+
+        {!complete ? (
+          <p className="text-right text-xs text-muted-foreground">
+            Score all {QUESTIONS.length} questions to submit. Your progress is
+            saved on this device.
+          </p>
+        ) : null}
       </div>
 
-      {!complete ? (
-        <p className="text-right text-xs text-muted-foreground">
-          Score all {QUESTIONS.length} questions to submit. Your progress is
-          saved on this device.
-        </p>
-      ) : null}
+      <ValuesRubric />
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent className="sm:max-w-md">
