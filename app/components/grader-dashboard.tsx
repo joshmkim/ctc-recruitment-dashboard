@@ -186,8 +186,8 @@ export function GraderDashboard({
         <section className="rounded-2xl border border-brand/35 bg-brand-soft p-5">
           <h2 className="font-heading font-semibold text-brand-dark">Auto-assign</h2>
           <p className="mt-1 text-sm text-secondary-foreground">
-            Give every applicant {GRADERS_PER_APPLICANT} graders, without replacing
-            manual assignments.
+            Give every applicant {GRADERS_PER_APPLICANT} graders with varied pairings,
+            without replacing manual assignments.
           </p>
           <div className="mt-3 flex items-center gap-2">
             <Button onClick={openAutoAssign} disabled={pending || !enoughGraders}>
@@ -298,6 +298,11 @@ export function GraderDashboard({
                   value={preview.gradersAffected}
                 />
                 <PreviewRow label="Active graders" value={preview.activeGraders} />
+                <PreviewRow label="Distinct grader pairs" value={preview.distinctPairs} />
+                <PreviewRow
+                  label="Most-used pair"
+                  value={preview.mostRepeatedPair}
+                />
                 {preview.shortfall ? (
                   <PreviewRow
                     label="Slots that cannot be filled"

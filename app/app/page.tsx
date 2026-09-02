@@ -106,6 +106,11 @@ export default async function HomePage() {
       name,
       submittedAt,
       assignedGraderIds,
+      submittedGraderIds: canManageAssignments
+        ? assignedGraderIds.filter((graderId) =>
+            submittedAssignmentKeys.has(`${id}:${graderId}`),
+          )
+        : [],
       graded: canManageAssignments
         ? assignedGraderIds.length === GRADERS_PER_APPLICANT &&
           assignedGraderIds.every((graderId) =>

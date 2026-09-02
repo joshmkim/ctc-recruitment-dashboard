@@ -3,25 +3,21 @@
 import { revalidatePath } from "next/cache";
 
 import { requireAdmin } from "@/lib/admin-auth";
-import {
-  assertActiveSetUnchanged,
-} from "@/lib/applicant-sets";
+import { assertActiveSetUnchanged } from "@/lib/applicant-sets";
 import { getApplicants } from "@/lib/applications";
 import {
-  ASSIGNMENT_SLOTS,
-  GRADERS_PER_APPLICANT,
-  type AssignmentSlot,
-} from "@/lib/grading";
+  buildPairCounts,
+  choosePartner,
+  hashSeed,
+  mulberry32,
+  planAssignments,
+  type AssignmentPlanRow,
+} from "@/lib/assignment-plan";
+import { GRADERS_PER_APPLICANT } from "@/lib/grading";
 import { selectAllRows, supabase } from "@/lib/supabase";
 import { addGraderForSet, listGraders } from "@/lib/actions/graders";
 
-type AssignmentRow = {
-  set_id: string;
-  applicant_id: string;
-  grader_id: string;
-  slot: AssignmentSlot;
-};
-type GraderRow = { id: string; name: string; is_active: boolean };
+type AssignmentRow = AssignmentPlanRow;
 
 function refreshAdmin() {
   revalidatePath("/", "layout");
@@ -48,79 +44,6 @@ async function loadAssignmentState(setId: string) {
     graders,
     assignments: assignments ?? [],
   };
-}
-
-function leastLoadedEligible(
-  graders: GraderRow[],
-  assignments: AssignmentRow[],
-  applicantId: string,
-  allowedIds?: Set<string>,
-) {
-  const assigned = new Set(
-    assignments
-      .filter((assignment) => assignment.applicant_id === applicantId)
-      .map((assignment) => assignment.grader_id),
-  );
-  const load = new Map<string, number>();
-
-  for (const grader of graders) {
-    load.set(
-      grader.id,
-      assignments.filter((assignment) => assignment.grader_id === grader.id).length,
-    );
-  }
-
-  return graders
-    .filter(
-      (grader) =>
-        grader.is_active &&
-        !assigned.has(grader.id) &&
-        (!allowedIds || allowedIds.has(grader.id)),
-    )
-    .sort(
-      (left, right) =>
-        (load.get(left.id) ?? 0) - (load.get(right.id) ?? 0) ||
-        left.name.localeCompare(right.name),
-    )[0];
-}
-
-/** Fills whichever of the two slots each applicant is missing, without touching
- *  existing rows. Pure, so the preview and the write agree on what would happen. */
-function planAssignments(
-  applicants: Array<{ id: string }>,
-  graders: GraderRow[],
-  assignments: AssignmentRow[],
-) {
-  const inserts: AssignmentRow[] = [];
-  const current = [...assignments];
-  let shortfall = 0;
-
-  for (const applicant of applicants) {
-    const filled = new Set(
-      current
-        .filter((assignment) => assignment.applicant_id === applicant.id)
-        .map((assignment) => assignment.slot),
-    );
-
-    for (const slot of ASSIGNMENT_SLOTS) {
-      if (filled.has(slot)) continue;
-
-      const target = leastLoadedEligible(graders, current, applicant.id);
-      if (!target) {
-        // Eligibility only excludes graders already on this applicant, so
-        // finding nobody for one slot means nobody for the rest either.
-        shortfall += GRADERS_PER_APPLICANT - filled.size;
-        break;
-      }
-
-      const assignment = { set_id: "", applicant_id: applicant.id, grader_id: target.id, slot };
-      inserts.push(assignment);
-      current.push(assignment);
-      filled.add(slot);
-    }
-  }
-
-  return { inserts, shortfall };
 }
 
 /**
@@ -166,6 +89,8 @@ export type AutoAssignPreview = {
   gradersAffected: number;
   submittedScores: number;
   gradersStarted: number;
+  distinctPairs: number;
+  mostRepeatedPair: number;
 };
 
 /** What `autoAssign` would do, so the confirmation can show it before writing. */
@@ -185,7 +110,13 @@ export async function previewAutoAssign(expectedSetId: string): Promise<AutoAssi
   ]);
   if (error) throw new Error(`Could not load submitted scores: ${error.message}`);
 
-  const { inserts, shortfall } = planAssignments(applicants, graders, assignments);
+  const { inserts, shortfall } = planAssignments(
+    applicants,
+    graders,
+    assignments,
+    mulberry32(hashSeed(set.id)),
+  );
+  const pairCounts = buildPairCounts([...assignments, ...inserts]);
 
   return {
     toCreate: inserts.length,
@@ -194,6 +125,8 @@ export async function previewAutoAssign(expectedSetId: string): Promise<AutoAssi
     gradersAffected: new Set(inserts.map((assignment) => assignment.grader_id)).size,
     submittedScores: (submitted ?? []).length,
     gradersStarted: new Set((submitted ?? []).map((score) => score.grader_id)).size,
+    distinctPairs: pairCounts.size,
+    mostRepeatedPair: Math.max(0, ...pairCounts.values()),
   };
 }
 
@@ -212,7 +145,12 @@ export async function autoAssign(expectedSetId: string) {
     );
   }
 
-  const { inserts, shortfall } = planAssignments(applicants, graders, assignments);
+  const { inserts, shortfall } = planAssignments(
+    applicants,
+    graders,
+    assignments,
+    mulberry32(hashSeed(set.id)),
+  );
 
   let assigned = 0;
   if (inserts.length) {
@@ -274,18 +212,21 @@ export async function deactivateAndRedistribute(
       assignment.grader_id === graderId &&
       !submittedKeys.has(`${assignment.applicant_id}:${graderId}`),
   );
-  const current = assignments.filter((assignment) => assignment.grader_id !== graderId);
+  const ungradedApplicantIds = new Set(ungraded.map((assignment) => assignment.applicant_id));
+  const current = assignments.filter(
+    (assignment) =>
+      assignment.grader_id !== graderId || !ungradedApplicantIds.has(assignment.applicant_id),
+  );
   const inserts: AssignmentRow[] = [];
+  const random = mulberry32(hashSeed(`${set.id}:${graderId}`));
 
   for (const assignment of ungraded) {
-    const target = leastLoadedEligible(
-      graders.map((item) => ({
-        ...item,
-        is_active: validTargets.some((valid) => valid.id === item.id),
-      })),
+    const target = choosePartner(
+      graders,
       current,
       assignment.applicant_id,
-      new Set(validTargets.map((item) => item.id)),
+      targetIds,
+      random,
     );
     // The outgoing row is deleted below, so the replacement inherits its slot
     // and the applicant keeps both graders. When there is no eligible target the

@@ -127,6 +127,71 @@ export async function assignGrader(
   revalidatePath("/", "layout");
 }
 
+async function assertAssignmentIsUnscored(
+  setId: string,
+  applicantId: string,
+  graderId: string,
+) {
+  const { data, error } = await supabase
+    .from("written_scores")
+    .select("id")
+    .eq("set_id", setId)
+    .eq("applicant_id", applicantId)
+    .eq("grader_id", graderId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not verify submitted scores: ${error.message}`);
+  if (data) {
+    throw new Error(
+      "This grader has already submitted a score, so their assignment cannot be changed.",
+    );
+  }
+}
+
+export async function reassignGrader(
+  applicantId: string,
+  fromGraderId: string,
+  toGraderId: string,
+  expectedSetId: string,
+) {
+  await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
+  if (fromGraderId === toGraderId) return;
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("applicant_set_graders")
+    .select("is_active")
+    .eq("set_id", set.id)
+    .eq("grader_id", toGraderId)
+    .maybeSingle();
+  if (membershipError) throw new Error(`Could not verify grader roster: ${membershipError.message}`);
+  if (!membership?.is_active) {
+    throw new Error("That grader is not active in this applicant set.");
+  }
+
+  await assertAssignmentIsUnscored(set.id, applicantId, fromGraderId);
+
+  const { data, error } = await supabase
+    .from("assignments")
+    .update({ grader_id: toGraderId })
+    .eq("set_id", set.id)
+    .eq("applicant_id", applicantId)
+    .eq("grader_id", fromGraderId)
+    .select("slot");
+
+  if (error?.code === "23505") {
+    throw new Error(
+      "Another admin just changed this applicant's graders. Reload and try again.",
+    );
+  }
+  if (error) throw new Error(`Could not switch grader: ${error.message}`);
+  if (!data?.length) {
+    throw new Error("That assignment no longer exists. Reload and try again.");
+  }
+
+  revalidatePath("/", "layout");
+}
+
 export async function unassignGrader(
   applicantId: string,
   graderId: string,
@@ -134,6 +199,8 @@ export async function unassignGrader(
 ) {
   await requireAdmin();
   const set = await assertActiveSetUnchanged(expectedSetId);
+
+  await assertAssignmentIsUnscored(set.id, applicantId, graderId);
 
   const { error } = await supabase
     .from("assignments")

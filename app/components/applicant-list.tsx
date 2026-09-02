@@ -15,7 +15,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { assignGrader, unassignGrader } from "@/lib/actions/assignments";
+import {
+  assignGrader,
+  reassignGrader,
+  unassignGrader,
+} from "@/lib/actions/assignments";
 import { GRADERS_PER_APPLICANT } from "@/lib/grading";
 
 /** Already reduced server-side: the graders on this applicant and whether the
@@ -25,6 +29,7 @@ export type ApplicantRow = {
   name: string;
   submittedAt: string;
   assignedGraderIds: string[];
+  submittedGraderIds: string[];
   graded: boolean;
 };
 
@@ -119,30 +124,18 @@ export function ApplicantList({
 
               <div className="col-span-2 flex flex-wrap items-center gap-1.5 sm:col-span-1 sm:justify-self-start">
                 {assigned.map((assignee) => (
-                  <span
+                  <AssignedGrader
                     key={assignee.id}
-                    className={`inline-flex w-fit items-center gap-1 whitespace-nowrap rounded-full bg-brand-soft py-1 text-xs font-medium text-secondary-foreground ${
-                      canManageAssignments ? "pr-1 pl-2.5" : "px-2.5"
-                    }`}
-                  >
-                    {assignee.name}
-                    {canManageAssignments ? (
-                      <button
-                        type="button"
-                        aria-label={`Unassign ${assignee.name}`}
-                        disabled={pending}
-                        onClick={() =>
-                          run(
-                            () => unassignGrader(applicant.id, assignee.id, activeSetId!),
-                            "Could not remove assignment.",
-                          )
-                        }
-                        className="cursor-pointer rounded-full p-0.5 hover:bg-brand/25"
-                      >
-                        <XIcon className="size-3" />
-                      </button>
-                    ) : null}
-                  </span>
+                    applicantId={applicant.id}
+                    assignee={assignee}
+                    assignedGraderIds={applicant.assignedGraderIds}
+                    submitted={applicant.submittedGraderIds.includes(assignee.id)}
+                    graders={graders}
+                    activeSetId={activeSetId}
+                    canManageAssignments={canManageAssignments}
+                    pending={pending}
+                    run={run}
+                  />
                 ))}
 
                 {canManageAssignments && hasRoom && unassigned.length > 0 ? (
@@ -198,6 +191,96 @@ export function ApplicantList({
           : "Graded shows whether you have submitted a score. Only the applications assigned to you are listed; the other grader on each one is named beside it."}
       </p>
     </div>
+  );
+}
+
+function AssignedGrader({
+  applicantId,
+  assignee,
+  assignedGraderIds,
+  submitted,
+  graders,
+  activeSetId,
+  canManageAssignments,
+  pending,
+  run,
+}: {
+  applicantId: string;
+  assignee: { id: string; name: string };
+  assignedGraderIds: string[];
+  submitted: boolean;
+  graders: Array<{ id: string; name: string; is_active: boolean }>;
+  activeSetId: string | null;
+  canManageAssignments: boolean;
+  pending: boolean;
+  run: (action: () => Promise<void>, failure: string) => void;
+}) {
+  const replacements = graders.filter(
+    (grader) =>
+      grader.is_active &&
+      grader.id !== assignee.id &&
+      !assignedGraderIds.includes(grader.id),
+  );
+  const canSwitch = canManageAssignments && !submitted && replacements.length > 0;
+
+  if (!canManageAssignments || submitted) {
+    return (
+      <span
+        title={submitted ? "This grader has already submitted a score." : undefined}
+        className="inline-flex w-fit items-center gap-1 whitespace-nowrap rounded-full bg-brand-soft px-2.5 py-1 text-xs font-medium text-secondary-foreground"
+      >
+        {assignee.name}
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex w-fit items-center gap-1 whitespace-nowrap rounded-full bg-brand-soft py-1 pr-1 pl-2.5 text-xs font-medium text-secondary-foreground">
+      {canSwitch ? (
+        <Select
+          items={replacements.map((grader) => ({ label: grader.name, value: grader.id }))}
+          value={null}
+          onValueChange={(value) => {
+            if (typeof value !== "string") return;
+            run(
+              () => reassignGrader(applicantId, assignee.id, value, activeSetId!),
+              "Could not switch grader.",
+            );
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            disabled={pending}
+            className="h-auto border-0 bg-transparent p-0 text-xs font-medium shadow-none hover:bg-transparent"
+          >
+            <SelectValue placeholder={assignee.name} />
+          </SelectTrigger>
+          <SelectContent>
+            {replacements.map((grader) => (
+              <SelectItem key={grader.id} value={grader.id}>
+                {grader.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <span>{assignee.name}</span>
+      )}
+      <button
+        type="button"
+        aria-label={`Unassign ${assignee.name}`}
+        disabled={pending}
+        onClick={() =>
+          run(
+            () => unassignGrader(applicantId, assignee.id, activeSetId!),
+            "Could not remove assignment.",
+          )
+        }
+        className="cursor-pointer rounded-full p-0.5 hover:bg-brand/25"
+      >
+        <XIcon className="size-3" />
+      </button>
+    </span>
   );
 }
 
