@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { ImportFailure, ImportReport } from "@/components/import-summary";
 import { Button } from "@/components/ui/button";
 import { importApplicants, type ImportSummary } from "@/lib/actions/import";
+import { Input } from "@/components/ui/input";
 
 export function ApplicantImport({ current }: { current: number }) {
   const router = useRouter();
@@ -15,6 +16,7 @@ export function ApplicantImport({ current }: { current: number }) {
   const [pending, startTransition] = useTransition();
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [setName, setSetName] = useState("");
 
   function upload(file: File) {
     setSummary(null);
@@ -24,7 +26,7 @@ export function ApplicantImport({ current }: { current: number }) {
       // Read in the browser: the action takes text, so the CSV never has to be
       // written anywhere on the way through.
       const csv = await file.text();
-      const result = await importApplicants(csv);
+      const result = await importApplicants(setName, csv);
 
       if (!result.ok) {
         setFailure(result.message);
@@ -32,9 +34,8 @@ export function ApplicantImport({ current }: { current: number }) {
       }
 
       setSummary(result);
-      toast.success(
-        `Imported ${result.created + result.updated} applicants (${result.created} new, ${result.updated} updated).`,
-      );
+      setSetName("");
+      toast.success(`Staged ${result.applicantCount} applicants for review.`);
       router.refresh();
     });
   }
@@ -47,19 +48,23 @@ export function ApplicantImport({ current }: { current: number }) {
             Import written applications
           </h2>
           <p className="mt-1 max-w-[62ch] text-sm text-secondary-foreground">
-            Export the form&apos;s response sheet as CSV and upload it. Applicants
-            are matched on email, so running this again picks up late submissions
-            and edits without touching anybody&apos;s scores. Nothing is ever
-            deleted.
+            Upload a new set from the form&apos;s response sheet. It stays private
+            until you anonymize it and click Done.
           </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            {current === 0
-              ? "No applicants imported yet."
-              : `${current} applicant${current === 1 ? "" : "s"} in the pool.`}
+            {current === 0 ? "No active applicant set." : `${current} applicants in the active set.`}
           </p>
         </div>
 
-        <div className="shrink-0">
+        <div className="flex shrink-0 gap-2">
+          <Input
+            value={setName}
+            onChange={(event) => setSetName(event.target.value)}
+            aria-label="Applicant set name"
+            placeholder="Set name"
+            disabled={pending}
+            className="w-44"
+          />
           <input
             ref={input}
             type="file"
@@ -72,7 +77,7 @@ export function ApplicantImport({ current }: { current: number }) {
               if (file) upload(file);
             }}
           />
-          <Button disabled={pending} onClick={() => input.current?.click()}>
+          <Button disabled={pending || !setName.trim()} onClick={() => input.current?.click()}>
             {pending ? (
               <>
                 <Loader2Icon className="animate-spin" /> Importing...
@@ -95,6 +100,9 @@ export function ApplicantImport({ current }: { current: number }) {
       {summary ? (
         <div className="mt-4">
           <ImportReport summary={summary} />
+          <p className="mt-3 text-sm text-muted-foreground">
+            Continue setup from the applicant set below.
+          </p>
         </div>
       ) : null}
 

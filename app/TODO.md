@@ -17,10 +17,6 @@ should stay off the scoring screen: demographics next to an essay somebody is
 about to score introduce bias into an individual admissions decision for no
 upside. Aggregate them for admins if they are wanted at all.
 
-### Score level descriptions
-
-`lib/scores.ts` defines the 1–4 scale as `{ value, label, description }` with labels Weak, Satisfactory, Good, Strong. The `description` fields are placeholders. Fill them in with the rubric copy; the UI already renders a description slot under the selector when a score is picked.
-
 ### The rest of the dashboard
 
 `CLAUDE.md` describes two surfaces and two deliberation types. The written scorer and the written deliberation view exist; the interview side does not:
@@ -42,7 +38,13 @@ look at if the dashboard feels slow.
 
 Admin is a real boundary: a shared password mints an HMAC-signed httpOnly cookie, and every privileged server action calls `requireAdmin()` before touching the database.
 
-Grader identity is not. A grader picks their name at `/enter` and it is stored in `ctc-grader-id`, a plain unsigned cookie with `httpOnly: false`, and `submitScores` trusts the `graderId` its caller passes rather than reading it back from the session. Anyone who can reach the app can therefore submit scores under any grader's name. That is tolerable for an internal tool where every user is trusted and the surface is a handful of club members, but it should not survive contact with real admissions decisions. Real per-user login is the fix; signing the grader cookie and deriving `graderId` server-side inside `submitScores` is the cheap interim step.
+Grader identity is not. A grader picks their name at `/enter` and it is stored in
+`ctc-grader-id`, a plain unsigned cookie with `httpOnly: false`. Server actions
+derive the grader id from that cookie, but anyone who can reach the app can forge
+it and therefore submit scores under any grader's name. That is tolerable for an
+internal tool where every user is trusted and the surface is a handful of club
+members, but it should not survive contact with real admissions decisions. Real
+per-user login is the fix; signing the grader cookie is the cheap interim step.
 
 ### Regular vs admin permissions
 

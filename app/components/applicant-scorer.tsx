@@ -21,22 +21,35 @@ import type { Assignment } from "@/lib/actions/assignments";
 import { getMyScores, submitScores } from "@/lib/actions/scores";
 import type { Applicant } from "@/lib/applications";
 import { QUESTIONS, type QuestionId } from "@/lib/questions";
-import { SCORE_LEVELS, type ScoreValue } from "@/lib/scores";
+import { SCORE_LEVELS, SCORE_VALUES, type ScoreValue } from "@/lib/scores";
 import { cn } from "@/lib/utils";
 
 type Draft = Record<QuestionId, ScoreValue | null>;
 
 const EMPTY_DRAFT: Draft = { q1: null, q2: null, q3: null, q4: null, q5: null };
 
-function draftKey(graderId: string, applicantId: string) {
-  return `ctc.draft.${graderId}.${applicantId}`;
+function draftKey(setId: string, graderId: string, applicantId: string) {
+  return `ctc.draft.${setId}.${graderId}.${applicantId}`;
+}
+
+function classYearLabel(graduationYear: string) {
+  const year = graduationYear.match(/\b20\d{2}\b/)?.[0];
+  const classYear: Record<string, string> = {
+    "2027": "Senior",
+    "2028": "Junior",
+    "2029": "Sophomore",
+    "2030": "Freshman",
+  };
+  return year && classYear[year] ? `${classYear[year]} · ${year}` : graduationYear;
 }
 
 export function ApplicantScorer({
+  setId,
   applicant,
   queue,
   assignments,
 }: {
+  setId: string;
   applicant: Applicant;
   queue: { id: string; name: string }[];
   assignments: Assignment[];
@@ -72,11 +85,11 @@ export function ApplicantScorer({
   useEffect(() => {
     let cancelled = false;
     const stored = grader
-      ? window.localStorage.getItem(draftKey(grader.id, applicant.id))
+      ? window.localStorage.getItem(draftKey(setId, grader.id, applicant.id))
       : null;
 
     const load = grader
-      ? getMyScores(applicant.id, grader.id).catch(() => null)
+      ? getMyScores(applicant.id, setId).catch(() => null)
       : Promise.resolve(null);
 
     load.then((saved) => {
@@ -97,7 +110,7 @@ export function ApplicantScorer({
     return () => {
       cancelled = true;
     };
-  }, [applicant.id, grader]);
+  }, [applicant.id, grader, setId]);
 
   const setScore = useCallback(
     (question: QuestionId, value: ScoreValue) => {
@@ -105,28 +118,37 @@ export function ApplicantScorer({
         const updated = { ...current, [question]: value };
         if (grader) {
           window.localStorage.setItem(
-            draftKey(grader.id, applicant.id),
+            draftKey(setId, grader.id, applicant.id),
             JSON.stringify(updated),
           );
         }
         return updated;
       });
     },
-    [applicant.id, grader],
+    [applicant.id, grader, setId],
   );
 
   const scoredCount = QUESTIONS.filter((q) => draft[q.id] !== null).length;
   const complete = scoredCount === QUESTIONS.length;
+  const overallTotal = QUESTIONS.reduce(
+    (sum, question) => sum + (draft[question.id] ?? 0),
+    0,
+  );
+  const overallMax = QUESTIONS.length * SCORE_VALUES[SCORE_VALUES.length - 1];
 
   function handleSubmit() {
     if (!grader || !complete) return;
 
     startTransition(async () => {
       try {
-        await submitScores(applicant.id, grader.id, draft as Record<QuestionId, ScoreValue>);
-        window.localStorage.removeItem(draftKey(grader.id, applicant.id));
+        await submitScores(
+          applicant.id,
+          draft as Record<QuestionId, ScoreValue>,
+          setId,
+        );
+        window.localStorage.removeItem(draftKey(setId, grader.id, applicant.id));
         setConfirmOpen(false);
-        toast.success(`Scores saved for ${applicant.name}`);
+        toast.success("Scores saved");
         router.push(next ? `/score/${encodeURIComponent(next.id)}` : "/");
       } catch (error) {
         toast.error(
@@ -138,23 +160,26 @@ export function ApplicantScorer({
 
   return (
     <div className="flex flex-col gap-5">
+      <h1 className="flex items-baseline gap-3 font-heading text-2xl font-semibold tracking-tight text-brand-dark">
+        <span className="font-mono">{applicant.name}</span>
+        {applicant.profile.graduationYear ? (
+          <span className="text-muted-foreground">
+            {classYearLabel(applicant.profile.graduationYear)}
+          </span>
+        ) : null}
+      </h1>
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-heading text-2xl font-semibold tracking-tight text-brand-dark">
-            {applicant.name}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Submitted{" "}
-            {new Date(applicant.submittedAt).toLocaleDateString(undefined, {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            })}
-            {position >= 0 && myQueue.length > 0 ? (
-              <> · {position + 1} of {myQueue.length} assigned to you</>
-            ) : null}
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Submitted{" "}
+          {new Date(applicant.submittedAt).toLocaleDateString(undefined, {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })}
+          {position >= 0 && myQueue.length > 0 ? (
+            <> · {position + 1} of {myQueue.length} assigned to you</>
+          ) : null}
+        </p>
         <div className="flex items-center gap-2">
           {alreadySubmitted ? (
             <span className="rounded-full bg-brand-soft px-2.5 py-1 text-xs font-medium text-secondary-foreground">
@@ -228,6 +253,10 @@ export function ApplicantScorer({
         <ScoreSelector
           value={loaded ? draft[activeTab] : null}
           onChange={(value) => setScore(activeTab, value)}
+          rubric={
+            QUESTIONS.find((question) => question.id === activeTab)?.rubric ??
+            QUESTIONS[0].rubric
+          }
         />
       </div>
 
@@ -275,9 +304,7 @@ export function ApplicantScorer({
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Submit scores for {applicant.name}?
-            </DialogTitle>
+            <DialogTitle>Submit these scores?</DialogTitle>
             <DialogDescription>
               {alreadySubmitted
                 ? "This replaces the scores you submitted earlier."
@@ -304,6 +331,13 @@ export function ApplicantScorer({
               );
             })}
           </ul>
+
+          <p className="flex items-baseline justify-between gap-3 px-3 pt-1">
+            <span className="text-sm text-muted-foreground">Overall</span>
+            <span className="font-heading text-xl font-semibold tabular-nums text-brand-dark">
+              {overallTotal}/{overallMax}
+            </span>
+          </p>
 
           <DialogFooter>
             <Button

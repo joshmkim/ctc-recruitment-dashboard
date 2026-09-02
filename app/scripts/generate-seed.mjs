@@ -626,11 +626,11 @@ const HEADERS = [
   "Resume",
   "Other Links (optional)",
   "Role",
-  "What is important to you? Tell us about a problem you see in the world (big or small), what actions you\u2019ve taken to make a positive impact, and what you learned. (900 characters max)",
-  "Community is a core pillar of CTC. Tell us about a community you felt like you truly belonged to. What aspects do you hope to bring into the CTC family? (900 characters max)",
-  "Write a short thank-you note acknowledging someone who has taught you something valuable and why it mattered (not a family member). (~200 words, flexible)",
-  "Please describe any relevant technical or project experiences (personal projects, internships, research, etc). Feel free to also share any technologies, skills, or experiences you are excited about and are eager to learn more about. (600 characters max)",
-  "At CTC, one of our favorite traditions is Lightning Talks, where a member gives a short presentation on an interest, passion, or hobby.\nTopics from last year included: how to DJ, an interactive self-defense workshop, all about Niki Zefanya, and more!\nWhat would you give a lightning talk on and why? (450 characters max)",
+  "What is important to you? Tell us about a problem you see in the world (big or small), what actions you\u2019ve taken to make a positive impact, and what you learned.",
+  "Community is a core pillar of CTC. Tell us about a community you felt like you truly belonged to. What aspects do you hope to bring into the CTC family?",
+  "Write a short thank-you note acknowledging someone who has taught you something valuable and why it mattered (not a family member).",
+  "Please briefly describe any relevant technical or group work experiences\u2014it does not need to be extensive! For example, personal projects, internships, classes, or any technologies or projects that you\u2019re excited about and would like to learn more about, etc.",
+  "At CTC, one of our favorite traditions is Lightning Talks, where a member gives a short presentation on an interest, passion, or hobby of theirs\u2014some topics from last year were how to DJ, a self defense workshop, and all about Niki Zefanya. What would you give a lightning talk on and why?",
   "Please list out any relevant classes you have taken so far or are taking at USC. Also, list out any planned commitments for the current school year and their estimated weekly time commitment.",
 ];
 

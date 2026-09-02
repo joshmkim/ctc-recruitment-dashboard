@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { ExternalLinkIcon, FileTextIcon, MaximizeIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ExternalLinkIcon,
+  FileTextIcon,
+  MaximizeIcon,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,19 +43,26 @@ function driveFileIds(resumeUrl: string) {
  * Taking the first rather than the whole value also fixes a multi-upload cell,
  * which holds several comma-separated URLs and was being handed to `href` whole.
  */
-function firstHttpUrl(value: string) {
-  for (const part of value.split(/[,\s]+/)) {
+function httpUrls(value: string) {
+  return value.split(/[,\s]+/).filter((part) => {
     try {
       const { protocol } = new URL(part);
-      if (protocol === "http:" || protocol === "https:") return part;
+      return protocol === "http:" || protocol === "https:";
     } catch {
-      // Not a URL; keep looking at the rest of the cell.
+      return false;
     }
-  }
-  return null;
+  });
 }
 
-function ResumeFrame({ id, name }: { id: string; name: string }) {
+function firstHttpUrl(value: string) {
+  return httpUrls(value)[0] ?? null;
+}
+
+function driveFileHref(id: string) {
+  return `https://drive.google.com/file/d/${id}/view`;
+}
+
+function ResumeFrame({ id }: { id: string }) {
   return (
     <iframe
       // Drive's own viewer, which renders the PDF without this app needing to
@@ -58,18 +71,117 @@ function ResumeFrame({ id, name }: { id: string; name: string }) {
       // folder has to be shared with the club, and Safari's third-party cookie
       // blocking can leave the frame empty — hence the Drive link alongside it.
       src={`https://drive.google.com/file/d/${id}/preview`}
-      title={`${name}'s resume`}
+      title="Resume"
       className="size-full rounded-lg border border-border bg-muted"
       allow="autoplay"
     />
   );
 }
 
+export function ApplicantResumeDialog({ resumeUrl }: { resumeUrl: string | null }) {
+  const [open, setOpen] = useState(false);
+  const [attachment, setAttachment] = useState(0);
+  const ids = resumeUrl ? driveFileIds(resumeUrl) : [];
+  const links = resumeUrl ? httpUrls(resumeUrl) : [];
+  const linkHref = links[0] ?? null;
+  const activeId = ids[attachment];
+  const activeHref = activeId ? driveFileHref(activeId) : linkHref;
+
+  function setDialogOpen(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (nextOpen) setAttachment(0);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setDialogOpen}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={!resumeUrl}
+        onClick={() => setDialogOpen(true)}
+      >
+        <FileTextIcon />
+        View resume
+      </Button>
+      <DialogContent className="flex h-[90vh] max-w-[calc(100%-2rem)] flex-col sm:max-w-5xl">
+        <DialogHeader className="flex-row items-center justify-between gap-3">
+          <DialogTitle>
+            Resume{ids.length > 1 ? ` · ${attachment + 1} of ${ids.length}` : ""}
+          </DialogTitle>
+          {activeHref ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              render={<a href={activeHref} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLinkIcon /> Open in Drive
+            </Button>
+          ) : null}
+        </DialogHeader>
+        {ids.length ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-3 pb-1">
+            {ids.length > 1 ? (
+              <div className="flex items-center justify-between gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={attachment === 0}
+                  onClick={() => setAttachment((current) => current - 1)}
+                >
+                  <ChevronLeftIcon /> Previous
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Attachment {attachment + 1} of {ids.length}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={attachment === ids.length - 1}
+                  onClick={() => setAttachment((current) => current + 1)}
+                >
+                  Next <ChevronRightIcon />
+                </Button>
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1">
+              <ResumeFrame id={activeId!} />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Blank frame? Check you are signed into your USC Google account, or
+              open it in Drive.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-center text-sm text-muted-foreground">
+            {links.length ? (
+              <div className="flex flex-col gap-2">
+                <p>This resume cannot be previewed here. Open an attachment in a new tab.</p>
+                {links.map((href, index) => (
+                  <a
+                    key={href}
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-3 hover:text-foreground"
+                  >
+                    Open attachment {index + 1}
+                  </a>
+                ))}
+              </div>
+            ) : (
+              "This applicant did not attach a resume."
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function ApplicantResume({
-  name,
   resumeUrl,
 }: {
-  name: string;
   resumeUrl: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -116,7 +228,7 @@ export function ApplicantResume({
               <MaximizeIcon /> Expand
             </Button>
             {linkHref ? (
-              <Button variant="ghost" size="sm" render={<a href={linkHref} target="_blank" rel="noreferrer" />}>
+              <Button variant="ghost" size="sm" render={<a href={driveFileHref(ids[0])} target="_blank" rel="noreferrer" />}>
                 <ExternalLinkIcon /> Drive
               </Button>
             ) : null}
@@ -126,7 +238,7 @@ export function ApplicantResume({
         {/* Roughly a page's proportions, so a resume is legible in the column
             without the grader having to expand it first. */}
         <div className="aspect-[8.5/11] max-h-[calc(100vh-12rem)] p-2">
-          <ResumeFrame id={ids[0]} name={name} />
+          <ResumeFrame id={ids[0]} />
         </div>
 
         {ids.length > 1 ? (
@@ -157,11 +269,18 @@ export function ApplicantResume({
 
       <Dialog open={expanded} onOpenChange={setExpanded}>
         <DialogContent className="flex h-[90vh] max-w-[calc(100%-2rem)] flex-col sm:max-w-5xl">
-          <DialogHeader>
-            <DialogTitle>{name}&apos;s resume</DialogTitle>
+          <DialogHeader className="flex-row items-center justify-between gap-3">
+            <DialogTitle>Resume</DialogTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              render={<a href={driveFileHref(ids[0])} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLinkIcon /> Open in Drive
+            </Button>
           </DialogHeader>
           <div className="min-h-0 flex-1 pb-1">
-            <ResumeFrame id={ids[0]} name={name} />
+            <ResumeFrame id={ids[0]} />
           </div>
         </DialogContent>
       </Dialog>

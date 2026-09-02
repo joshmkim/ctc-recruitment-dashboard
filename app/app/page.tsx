@@ -11,11 +11,13 @@ import {
   type SubmittedScore,
 } from "@/lib/actions/scores";
 import { isAdmin } from "@/lib/admin-auth";
+import { getActiveApplicantSet } from "@/lib/applicant-sets";
 import {
   getApplicantSummaries,
   getApplicantSummariesByIds,
   type ApplicantSummary,
 } from "@/lib/applications";
+import { GRADERS_PER_APPLICANT } from "@/lib/grading";
 import { getGraderId } from "@/lib/identity";
 
 type PageData = {
@@ -49,7 +51,7 @@ async function loadFor(
 
   if (!graderId) return EMPTY;
 
-  const mine = await listMyAssignments(graderId);
+  const mine = await listMyAssignments();
   const ids = mine.map((assignment) => assignment.applicant_id);
   if (ids.length === 0) return EMPTY;
 
@@ -64,9 +66,10 @@ async function loadFor(
 }
 
 export default async function HomePage() {
-  const [canManageAssignments, graderId] = await Promise.all([
+  const [canManageAssignments, graderId, activeSet] = await Promise.all([
     isAdmin(),
     getGraderId(),
+    getActiveApplicantSet(),
   ]);
 
   // The layout already surfaces a banner when Supabase is unreachable; degrade
@@ -88,21 +91,29 @@ export default async function HomePage() {
     else graderIdsByApplicant.set(assignment.applicant_id, [assignment.grader_id]);
   }
 
-  const scoreCountByApplicant = new Map<string, number>();
+  const submittedAssignmentKeys = new Set(
+    data.submitted.map((score) => `${score.applicant_id}:${score.grader_id}`),
+  );
+  const gradedByCurrentGrader = new Set<string>();
   for (const score of data.submitted) {
-    scoreCountByApplicant.set(
-      score.applicant_id,
-      (scoreCountByApplicant.get(score.applicant_id) ?? 0) + 1,
-    );
+    if (score.grader_id === graderId) gradedByCurrentGrader.add(score.applicant_id);
   }
 
-  const rows: ApplicantRow[] = data.applicants.map(({ id, name, submittedAt }) => ({
-    id,
-    name,
-    submittedAt,
-    assignedGraderIds: graderIdsByApplicant.get(id) ?? [],
-    scoreCount: scoreCountByApplicant.get(id) ?? 0,
-  }));
+  const rows: ApplicantRow[] = data.applicants.map(({ id, name, submittedAt }) => {
+    const assignedGraderIds = graderIdsByApplicant.get(id) ?? [];
+    return {
+      id,
+      name,
+      submittedAt,
+      assignedGraderIds,
+      graded: canManageAssignments
+        ? assignedGraderIds.length === GRADERS_PER_APPLICANT &&
+          assignedGraderIds.every((graderId) =>
+            submittedAssignmentKeys.has(`${id}:${graderId}`),
+          )
+        : gradedByCurrentGrader.has(id),
+    };
+  });
 
   return (
     <div className="mx-auto w-full max-w-[1600px] px-6 py-8">
@@ -119,6 +130,7 @@ export default async function HomePage() {
 
       <ApplicantList
         applicants={rows}
+        activeSetId={activeSet?.id ?? null}
         canManageAssignments={canManageAssignments}
         showingEveryone={canManageAssignments}
       />

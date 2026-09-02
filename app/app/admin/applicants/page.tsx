@@ -1,5 +1,7 @@
 import { ApplicantImport } from "@/components/applicant-import";
+import { ApplicantSetList } from "@/components/applicant-set-list";
 import { SeedPanel } from "@/components/seed-panel";
+import { listApplicantSets } from "@/lib/applicant-sets";
 import { getApplicants } from "@/lib/applications";
 
 /** The project ref out of the Supabase URL, so the seed panel can name the
@@ -13,11 +15,12 @@ function supabaseProject() {
 }
 
 export default async function ApplicantsPage() {
-  const applicants = await getApplicants();
+  const [applicants, sets] = await Promise.all([getApplicants(), listApplicantSets()]);
 
   return (
     <div className="flex flex-col gap-5">
       <ApplicantImport current={applicants.length} />
+      <ApplicantSetList sets={sets} />
       {/* Seeding is development-only, and the action refuses independently of
           this check so a production deploy cannot be talked into it. */}
       {process.env.NODE_ENV === "production" ? null : (

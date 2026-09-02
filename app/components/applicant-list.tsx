@@ -17,24 +17,25 @@ import {
 } from "@/components/ui/select";
 import { assignGrader, unassignGrader } from "@/lib/actions/assignments";
 import { GRADERS_PER_APPLICANT } from "@/lib/grading";
-import { QUESTIONS } from "@/lib/questions";
 
-/** Already reduced server-side: the graders on this applicant and how many have
- *  submitted, rather than the assignment and score tables in full. */
+/** Already reduced server-side: the graders on this applicant and whether the
+ *  relevant grader has submitted, rather than the assignment and score tables. */
 export type ApplicantRow = {
   id: string;
   name: string;
   submittedAt: string;
   assignedGraderIds: string[];
-  scoreCount: number;
+  graded: boolean;
 };
 
 export function ApplicantList({
   applicants,
+  activeSetId,
   canManageAssignments,
   showingEveryone,
 }: {
   applicants: ApplicantRow[];
+  activeSetId: string | null;
   canManageAssignments: boolean;
   /** True on the admin view. Otherwise `applicants` is already just the
    *  signed-in grader's queue, scoped on the server. */
@@ -66,10 +67,10 @@ export function ApplicantList({
       )}
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
-        <div className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border bg-muted/40 px-5 py-3 text-xs font-medium tracking-wide text-muted-foreground uppercase sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
+        <div className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border bg-muted/40 px-5 py-3 text-xs font-medium tracking-wide text-muted-foreground uppercase sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_64px]">
           <span>Applicant</span>
           <span className="hidden sm:block">Graders</span>
-          <span>Scores</span>
+          <span className="justify-self-end">Graded</span>
         </div>
 
         {applicants.length === 0 ? (
@@ -99,12 +100,12 @@ export function ApplicantList({
           return (
             <div
               key={applicant.id}
-              className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border px-5 py-4 last:border-b-0 hover:bg-muted/30 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]"
+              className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-border px-5 py-4 last:border-b-0 hover:bg-muted/30 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_64px]"
             >
               <div className="min-w-0">
                 <Link
                   href={`/score/${encodeURIComponent(applicant.id)}`}
-                  className="font-medium text-brand-dark hover:underline"
+                  className="font-mono font-medium tracking-wide text-brand-dark hover:underline"
                 >
                   {applicant.name}
                 </Link>
@@ -112,16 +113,17 @@ export function ApplicantList({
                   {new Date(applicant.submittedAt).toLocaleDateString(undefined, {
                     day: "numeric",
                     month: "short",
-                  })}{" "}
-                  · {applicant.id}
+                  })}
                 </p>
               </div>
 
-              <div className="col-span-2 flex flex-wrap items-center gap-1.5 sm:col-span-1">
+              <div className="col-span-2 flex flex-wrap items-center gap-1.5 sm:col-span-1 sm:justify-self-start">
                 {assigned.map((assignee) => (
                   <span
                     key={assignee.id}
-                    className="inline-flex items-center gap-1 rounded-full bg-brand-soft py-1 pr-1 pl-2.5 text-xs font-medium text-secondary-foreground"
+                    className={`inline-flex w-fit items-center gap-1 whitespace-nowrap rounded-full bg-brand-soft py-1 text-xs font-medium text-secondary-foreground ${
+                      canManageAssignments ? "pr-1 pl-2.5" : "px-2.5"
+                    }`}
                   >
                     {assignee.name}
                     {canManageAssignments ? (
@@ -131,7 +133,7 @@ export function ApplicantList({
                         disabled={pending}
                         onClick={() =>
                           run(
-                            () => unassignGrader(applicant.id, assignee.id),
+                            () => unassignGrader(applicant.id, assignee.id, activeSetId!),
                             "Could not remove assignment.",
                           )
                         }
@@ -153,7 +155,7 @@ export function ApplicantList({
                     onValueChange={(value) => {
                       if (typeof value !== "string") return;
                       run(
-                        () => assignGrader(applicant.id, value),
+                        () => assignGrader(applicant.id, value, activeSetId!),
                         "Could not assign grader.",
                       );
                     }}
@@ -176,14 +178,14 @@ export function ApplicantList({
                 ) : null}
               </div>
 
-              <span className="justify-self-end text-sm tabular-nums text-muted-foreground">
-                {applicant.scoreCount > 0 ? (
-                  <span className="rounded-full bg-primary/10 px-2.5 py-1 font-medium text-primary">
-                    {applicant.scoreCount}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground/60">—</span>
-                )}
+              <span
+                className={`justify-self-end rounded-full px-2.5 py-1 text-xs font-medium ${
+                  applicant.graded
+                    ? "bg-brand-soft text-brand-dark"
+                    : "bg-destructive/10 text-destructive"
+                }`}
+              >
+                {applicant.graded ? "YES" : "NO"}
               </span>
             </div>
           );
@@ -191,11 +193,9 @@ export function ApplicantList({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Scores counts how many graders have submitted all {QUESTIONS.length}{" "}
-        questions.{" "}
         {showingEveryone
-          ? "Every application is listed because you are signed in as an admin."
-          : "Only the applications assigned to you are listed. The other grader on each one is named beside it."}
+          ? "Graded shows whether every required score has been submitted. Every application is listed because you are signed in as an admin."
+          : "Graded shows whether you have submitted a score. Only the applications assigned to you are listed; the other grader on each one is named beside it."}
       </p>
     </div>
   );

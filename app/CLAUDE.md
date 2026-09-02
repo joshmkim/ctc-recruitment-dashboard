@@ -27,6 +27,10 @@ record; the `applicants` table is a snapshot of it.
   to re-run for late submissions and never touches submitted scores. It does not
   delete: an applicant present in the database but absent from the CSV is
   reported, not removed, because scores would be orphaned by acting on a guess.
+- After import, each applicant is assigned a unique three-letter alias (`AAA`–`ZZZ`).
+  The CSV still holds real names and `applicants.name` keeps them; graders only
+  ever see the alias. Re-importing does not change an alias already handed out.
+  Admin deliberation can reveal names with a toggle. See `0007_applicant_alias.sql`.
 - `applicant_id` is that email everywhere — `applicants`, `assignments`,
   `written_scores`, and `decisions`. It is the only durable key a Google Form
   offers. The three child tables reference `applicants` (`0005`) with

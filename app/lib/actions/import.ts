@@ -3,24 +3,19 @@
 import { revalidatePath } from "next/cache";
 
 import { requireAdmin } from "@/lib/admin-auth";
+import { assignMissingAliases } from "@/lib/applications";
 import { parseApplicantCsv } from "@/lib/import/applicant-csv";
-import { selectAllRows, supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 /** Rows per upsert. The essays make each row a few kilobytes, and one statement
  *  carrying a whole cohort is a needlessly large request to have fail. */
 const CHUNK = 200;
 
 export type ImportSummary = {
-  created: number;
-  updated: number;
+  setId: string;
+  applicantCount: number;
   blankRows: number;
   duplicates: Array<{ email: string; kept: string; discarded: number }>;
-  /** Applicants already in the database that this CSV does not mention. Never
-   *  deleted — see the note on the action below. */
-  missing: string[];
-  /** Of those, the ones graders have already scored. Louder, because it means the
-   *  export and the scores disagree about who is being considered. */
-  missingWithScores: string[];
   warnings: string[];
 };
 
@@ -50,9 +45,11 @@ export type ImportResult =
  * rather than an incident. That also covers a chunk failing halfway, since
  * running it again settles the rest.
  */
-export async function importApplicants(csv: string): Promise<ImportResult> {
+export async function importApplicants(name: string, csv: string): Promise<ImportResult> {
   await requireAdmin();
 
+  const setName = name.trim();
+  if (!setName) return { ok: false, message: "Give this applicant set a name." };
   if (!csv.trim()) return { ok: false, message: "That file is empty." };
 
   // Rejects a column that cannot be matched or a timestamp that cannot be read,
@@ -76,55 +73,131 @@ export async function importApplicants(csv: string): Promise<ImportResult> {
     };
   }
 
-  const [{ data: existing, error: existingError }, { data: scored, error: scoredError }] =
-    await Promise.all([
-      selectAllRows<{ applicant_id: string }>(
-        "applicants",
-        "applicant_id",
-        "applicant_id",
-      ),
-      selectAllRows<{ applicant_id: string }>("written_scores", "applicant_id", "id"),
-    ]);
-
-  if (existingError) {
-    return { ok: false, message: `Could not read current applicants: ${existingError.message}` };
+  const { data: set, error: setError } = await supabase
+    .from("applicant_sets")
+    .insert({ name: setName, status: "draft" })
+    .select("id")
+    .single();
+  if (setError || !set) {
+    return { ok: false, message: `Could not create applicant set: ${setError?.message ?? "unknown error"}` };
   }
-  if (scoredError) {
-    return { ok: false, message: `Could not read submitted scores: ${scoredError.message}` };
-  }
-
-  const existingIds = new Set((existing ?? []).map((row) => row.applicant_id));
-  const scoredIds = new Set((scored ?? []).map((row) => row.applicant_id));
-  const importedIds = new Set(rows.map((row) => row.applicant_id));
 
   for (let from = 0; from < rows.length; from += CHUNK) {
     const { error } = await supabase
       .from("applicants")
-      .upsert(rows.slice(from, from + CHUNK), { onConflict: "applicant_id" });
+      .insert(rows.slice(from, from + CHUNK).map((row) => ({ ...row, set_id: set.id })));
 
     if (error) {
+      await supabase.rpc("discard_applicant_set", { target_set_id: set.id });
       return {
         ok: false,
-        message:
-          `Import stopped after ${from} of ${rows.length} applicants: ${error.message}. ` +
-          "Importing is repeatable, so fix the problem and run it again to land the rest.",
+        message: `Could not stage the CSV: ${error.message}`,
       };
     }
   }
 
-  const missing = [...existingIds].filter((id) => !importedIds.has(id));
-
-  revalidatePath("/", "layout");
   revalidatePath("/admin", "layout");
 
   return {
     ok: true,
-    created: rows.filter((row) => !existingIds.has(row.applicant_id)).length,
-    updated: rows.filter((row) => existingIds.has(row.applicant_id)).length,
+    setId: set.id,
+    applicantCount: rows.length,
     blankRows,
     duplicates,
-    missing,
-    missingWithScores: missing.filter((id) => scoredIds.has(id)),
     warnings,
   };
+}
+
+/**
+ * Hands a unique AAA–ZZZ code to every applicant who does not have one yet.
+ *
+ * Called after every import so new rows from the CSV — which still carry real
+ * names — are anonymised without a separate step. Existing aliases are left
+ * alone, including on re-import.
+ */
+export async function anonymizeApplicantSet(setId: string): Promise<ImportResult> {
+  await requireAdmin();
+  const { data: set, error: setError } = await supabase
+    .from("applicant_sets").select("status").eq("id", setId).maybeSingle();
+  if (setError || !set) return { ok: false, message: "Applicant set was not found." };
+  if (set.status !== "draft") return { ok: false, message: "Only a draft applicant set can be anonymized." };
+  const aliasError = await assignMissingAliases(setId);
+  if (aliasError) return { ok: false, message: `Could not anonymize applicants: ${aliasError}` };
+  const { error } = await supabase.from("applicant_sets").update({ status: "anonymized" }).eq("id", setId);
+  if (error) return { ok: false, message: `Could not update applicant set: ${error.message}` };
+  return importSummary(setId);
+}
+
+export async function activateApplicantSet(setId: string): Promise<ImportResult> {
+  await requireAdmin();
+  const { count, error: rosterError } = await supabase
+    .from("applicant_set_graders")
+    .select("*", { count: "exact", head: true })
+    .eq("set_id", setId)
+    .eq("is_active", true);
+  if (rosterError || (count ?? 0) < 2) {
+    return { ok: false, message: "Choose at least two active graders before making this set active." };
+  }
+  const { error } = await supabase.rpc("activate_applicant_set", { target_set_id: setId });
+  if (error) return { ok: false, message: error.message };
+  revalidatePath("/", "layout");
+  revalidatePath("/admin", "layout");
+  return importSummary(setId);
+}
+
+export async function carryOverGraders(setId: string): Promise<ImportResult> {
+  await requireAdmin();
+  const { data: target, error: targetError } = await supabase
+    .from("applicant_sets").select("status").eq("id", setId).maybeSingle();
+  if (targetError || target?.status !== "anonymized") {
+    return { ok: false, message: "Only an anonymized draft can receive a grader roster." };
+  }
+  const { data: active, error: activeError } = await supabase
+    .from("applicant_sets").select("id").eq("status", "active").maybeSingle();
+  if (activeError || !active) return { ok: false, message: "No active grader roster is available to copy." };
+  const { data: roster, error: rosterError } = await supabase
+    .from("applicant_set_graders").select("grader_id, is_active").eq("set_id", active.id);
+  if (rosterError) return { ok: false, message: rosterError.message };
+  const { error } = await supabase.from("applicant_set_graders").upsert(
+    (roster ?? []).map((grader) => ({ set_id: setId, grader_id: grader.grader_id, is_active: grader.is_active })),
+    { onConflict: "set_id,grader_id" },
+  );
+  if (error) return { ok: false, message: error.message };
+  return importSummary(setId);
+}
+
+export async function createGraderRoster(setId: string, names: string[]): Promise<ImportResult> {
+  await requireAdmin();
+  const { data: target, error: targetError } = await supabase
+    .from("applicant_sets").select("status").eq("id", setId).maybeSingle();
+  if (targetError || target?.status !== "anonymized") {
+    return { ok: false, message: "Only an anonymized draft can receive a grader roster." };
+  }
+  const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+  if (uniqueNames.length < 2) return { ok: false, message: "Add at least two grader names." };
+  const { data: created, error } = await supabase
+    .from("graders")
+    .upsert(uniqueNames.map((name) => ({ name })), { onConflict: "name" })
+    .select("id");
+  if (error) return { ok: false, message: `Could not create grader roster: ${error.message}` };
+  const { error: memberError } = await supabase.from("applicant_set_graders").upsert(
+    (created ?? []).map((grader) => ({ set_id: setId, grader_id: grader.id, is_active: true })),
+    { onConflict: "set_id,grader_id" },
+  );
+  if (memberError) return { ok: false, message: memberError.message };
+  return importSummary(setId);
+}
+
+export async function discardApplicantSet(setId: string): Promise<ImportResult> {
+  await requireAdmin();
+  const { error } = await supabase.rpc("discard_applicant_set", { target_set_id: setId });
+  if (error) return { ok: false, message: `Could not discard applicant set: ${error.message}` };
+  revalidatePath("/admin", "layout");
+  return { ok: true, setId, applicantCount: 0, blankRows: 0, duplicates: [], warnings: [] };
+}
+
+async function importSummary(setId: string): Promise<ImportResult> {
+  const { count, error } = await supabase.from("applicants").select("*", { count: "exact", head: true }).eq("set_id", setId);
+  if (error) return { ok: false, message: error.message };
+  return { ok: true, setId, applicantCount: count ?? 0, blankRows: 0, duplicates: [], warnings: [] };
 }

@@ -3,10 +3,16 @@
 import { revalidatePath } from "next/cache";
 
 import { requireAdmin } from "@/lib/admin-auth";
+import {
+  assertActiveSetUnchanged,
+  requireActiveApplicantSet,
+} from "@/lib/applicant-sets";
 import { ASSIGNMENT_SLOTS, GRADERS_PER_APPLICANT } from "@/lib/grading";
+import { getGraderId } from "@/lib/identity";
 import { selectAllRows, selectRowsIn, supabase } from "@/lib/supabase";
 
 export type Assignment = {
+  set_id: string;
   applicant_id: string;
   grader_id: string;
 };
@@ -14,9 +20,12 @@ export type Assignment = {
 /** Every assignment. Only the admin views show every applicant's graders, so
  *  this is the admin read; a grader's own page uses the two below. */
 export async function listAssignments(): Promise<Assignment[]> {
+  const set = await requireActiveApplicantSet();
   const { data, error } = await selectAllRows<Assignment>(
     "assignments",
-    "applicant_id, grader_id",
+    "set_id, applicant_id, grader_id",
+    "id",
+    { column: "set_id", value: set.id },
   );
 
   if (error) throw new Error(`Could not load assignments: ${error.message}`);
@@ -24,12 +33,17 @@ export async function listAssignments(): Promise<Assignment[]> {
 }
 
 /** Just one grader's assignments, for screens that only build their own queue. */
-export async function listMyAssignments(
-  graderId: string,
-): Promise<Assignment[]> {
+export async function listMyAssignments(): Promise<Assignment[]> {
+  const [set, graderId] = await Promise.all([
+    requireActiveApplicantSet(),
+    getGraderId(),
+  ]);
+  if (!graderId) return [];
+
   const { data, error } = await supabase
     .from("assignments")
-    .select("applicant_id, grader_id")
+    .select("set_id, applicant_id, grader_id")
+    .eq("set_id", set.id)
     .eq("grader_id", graderId);
 
   if (error) throw new Error(`Could not load assignments: ${error.message}`);
@@ -41,23 +55,42 @@ export async function listMyAssignments(
 export async function listAssignmentsForApplicants(
   applicantIds: string[],
 ): Promise<Assignment[]> {
+  const set = await requireActiveApplicantSet();
   const { data, error } = await selectRowsIn<Assignment>(
     "assignments",
-    "applicant_id, grader_id",
+    "set_id, applicant_id, grader_id",
     "applicant_id",
     applicantIds,
+    { column: "set_id", value: set.id },
   );
 
   if (error) throw new Error(`Could not load assignments: ${error.message}`);
   return data ?? [];
 }
 
-export async function assignGrader(applicantId: string, graderId: string) {
+export async function assignGrader(
+  applicantId: string,
+  graderId: string,
+  expectedSetId: string,
+) {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("applicant_set_graders")
+    .select("is_active")
+    .eq("set_id", set.id)
+    .eq("grader_id", graderId)
+    .maybeSingle();
+  if (membershipError) throw new Error(`Could not verify grader roster: ${membershipError.message}`);
+  if (!membership?.is_active) {
+    throw new Error("That grader is not active in this applicant set.");
+  }
 
   const { data: existing, error: readError } = await supabase
     .from("assignments")
     .select("grader_id, slot")
+    .eq("set_id", set.id)
     .eq("applicant_id", applicantId);
   if (readError) throw new Error(`Could not assign grader: ${readError.message}`);
 
@@ -79,7 +112,7 @@ export async function assignGrader(applicantId: string, graderId: string) {
 
   const { error } = await supabase
     .from("assignments")
-    .insert({ applicant_id: applicantId, grader_id: graderId, slot });
+    .insert({ set_id: set.id, applicant_id: applicantId, grader_id: graderId, slot });
 
   // The read above and this insert are not one transaction, so a second admin
   // can claim the slot in between. The unique index refuses the write rather
@@ -94,12 +127,18 @@ export async function assignGrader(applicantId: string, graderId: string) {
   revalidatePath("/", "layout");
 }
 
-export async function unassignGrader(applicantId: string, graderId: string) {
+export async function unassignGrader(
+  applicantId: string,
+  graderId: string,
+  expectedSetId: string,
+) {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
 
   const { error } = await supabase
     .from("assignments")
     .delete()
+    .eq("set_id", set.id)
     .eq("applicant_id", applicantId)
     .eq("grader_id", graderId);
 

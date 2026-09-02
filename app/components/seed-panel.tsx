@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { DatabaseIcon, Loader2Icon, SproutIcon, UsersRoundIcon } from "lucide-react";
+import { ClipboardCheckIcon, DatabaseIcon, Loader2Icon, SproutIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImportFailure, ImportReport } from "@/components/import-summary";
@@ -16,60 +16,53 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ImportSummary } from "@/lib/actions/import";
-import { seedApplicants, seedGraders } from "@/lib/actions/seed";
-
-type Target = "graders" | "applicants";
-
-const COPY: Record<Target, { title: string; body: string; confirm: string }> = {
-  graders: {
-    title: "Seed 40 graders",
-    body: "Adds forty fictional graders. Names are unique, so running it twice adds nobody the second time.",
-    confirm: "Add 40 graders?",
-  },
-  applicants: {
-    title: "Seed 260 applicants",
-    body: "Imports the bundled cohort from seed/seed_applicants.csv through the normal importer, so it exercises the same parser a real export would.",
-    confirm: "Import 260 seed applicants?",
-  },
-};
+import { seedGrades, seedTestData } from "@/lib/actions/seed";
 
 export function SeedPanel({ project }: { project: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [confirming, setConfirming] = useState<Target | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [running, setRunning] = useState<"data" | "grades" | null>(null);
 
-  function run(target: Target) {
+  function run() {
     setSummary(null);
     setFailure(null);
-    setConfirming(null);
+    setConfirming(false);
+    setRunning("data");
 
     startTransition(async () => {
-      if (target === "graders") {
-        const result = await seedGraders();
-        if (!result.ok) {
-          setFailure(result.message);
-          return;
-        }
-        toast.success(
-          result.created
-            ? `Added ${result.created} graders. ${result.existing} already existed.`
-            : "All 40 seed graders were already there.",
-        );
-      } else {
-        const result = await seedApplicants();
+      try {
+        const result = await seedTestData();
         if (!result.ok) {
           setFailure(result.message);
           return;
         }
         setSummary(result);
-        toast.success(
-          `Seeded ${result.created + result.updated} applicants (${result.created} new, ${result.updated} updated).`,
-        );
+        toast.success(`Created seeded_version with ${result.applicantCount} applicants and 40 graders.`);
+        router.refresh();
+      } finally {
+        setRunning(null);
       }
+    });
+  }
 
-      router.refresh();
+  function runGrades() {
+    setFailure(null);
+    setRunning("grades");
+    startTransition(async () => {
+      try {
+        const result = await seedGrades();
+        if (!result.ok) {
+          setFailure(result.message);
+          return;
+        }
+        toast.success(`Seeded ${result.scoreCount} grades. Deliberation is ready.`);
+        router.refresh();
+      } finally {
+        setRunning(null);
+      }
     });
   }
 
@@ -82,9 +75,9 @@ export function SeedPanel({ project }: { project: string }) {
             Seed test data
           </h2>
           <p className="mt-1 max-w-[68ch] text-sm text-secondary-foreground">
-            Fills the database with a fake cohort so the queue, assignment
-            balancing, and deliberation views have something realistic to work on.
-            Both actions only add and update — neither deletes anything.
+            Creates and activates a new <span className="font-mono">seeded_version</span>{" "}
+            with 260 applicants and 40 graders using the same import,
+            anonymization, and roster flow as a CSV upload.
           </p>
           <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
             <DatabaseIcon className="size-3.5 shrink-0" />
@@ -95,31 +88,27 @@ export function SeedPanel({ project }: { project: string }) {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        {(["graders", "applicants"] as const).map((target) => (
-          <div
-            key={target}
-            className="flex flex-col justify-between gap-3 rounded-xl border border-border bg-card p-4"
-          >
-            <div>
-              <p className="text-sm font-medium text-brand-dark">
-                {COPY[target].title}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {COPY[target].body}
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              className="self-start"
-              disabled={pending}
-              onClick={() => setConfirming(target)}
-            >
-              {target === "graders" ? <UsersRoundIcon /> : <SproutIcon />}
-              {COPY[target].title}
-            </Button>
-          </div>
-        ))}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() => setConfirming(true)}
+        >
+          <SproutIcon />
+          Seed test data
+        </Button>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={runGrades}
+        >
+          {running === "grades" ? (
+            <Loader2Icon className="animate-spin" />
+          ) : (
+            <ClipboardCheckIcon />
+          )}
+          Seed grades
+        </Button>
       </div>
 
       {failure ? (
@@ -135,19 +124,19 @@ export function SeedPanel({ project }: { project: string }) {
       ) : null}
 
       <Dialog
-        open={Boolean(confirming)}
+        open={confirming}
         onOpenChange={(open) => {
-          if (!open && !pending) setConfirming(null);
+          if (!open && !pending) setConfirming(false);
         }}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{confirming ? COPY[confirming].confirm : ""}</DialogTitle>
+            <DialogTitle>Create and activate seeded_version?</DialogTitle>
             <DialogDescription>
               This writes to the Supabase project{" "}
-              <span className="font-mono">{project}</span>. If that is the real
-              recruitment database, cancel — seeded rows are not marked and there
-              is no undo.
+              <span className="font-mono">{project}</span> and archives the currently
+              active applicant version. If that is the real recruitment database,
+              cancel.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -155,16 +144,16 @@ export function SeedPanel({ project }: { project: string }) {
               variant="outline"
               size="lg"
               disabled={pending}
-              onClick={() => setConfirming(null)}
+              onClick={() => setConfirming(false)}
             >
               Cancel
             </Button>
             <Button
               size="lg"
               disabled={pending}
-              onClick={() => confirming && run(confirming)}
+              onClick={run}
             >
-              {pending ? (
+              {running === "data" ? (
                 <>
                   <Loader2Icon className="animate-spin" /> Seeding...
                 </>

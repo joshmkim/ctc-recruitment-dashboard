@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 
+import { requireActiveApplicantSet } from "@/lib/applicant-sets";
+import { getGraderId } from "@/lib/identity";
 import { selectAllRows, selectRowsIn, supabase } from "@/lib/supabase";
 import { isScoreValue, type ScoreValue } from "@/lib/scores";
 
@@ -11,15 +13,19 @@ export type CompleteScores = Record<
 >;
 
 export type SubmittedScore = {
+  set_id: string;
   applicant_id: string;
   grader_id: string;
 };
 
 /** Which applicants each grader has already submitted, for the admin counts. */
 export async function listSubmittedScores(): Promise<SubmittedScore[]> {
+  const set = await requireActiveApplicantSet();
   const { data, error } = await selectAllRows<SubmittedScore>(
     "written_scores",
-    "applicant_id, grader_id",
+    "set_id, applicant_id, grader_id",
+    "id",
+    { column: "set_id", value: set.id },
   );
 
   if (error) throw new Error(`Could not load scores: ${error.message}`);
@@ -30,11 +36,13 @@ export async function listSubmittedScores(): Promise<SubmittedScore[]> {
 export async function listSubmittedScoresForApplicants(
   applicantIds: string[],
 ): Promise<SubmittedScore[]> {
+  const set = await requireActiveApplicantSet();
   const { data, error } = await selectRowsIn<SubmittedScore>(
     "written_scores",
-    "applicant_id, grader_id",
+    "set_id, applicant_id, grader_id",
     "applicant_id",
     applicantIds,
+    { column: "set_id", value: set.id },
   );
 
   if (error) throw new Error(`Could not load scores: ${error.message}`);
@@ -43,11 +51,21 @@ export async function listSubmittedScoresForApplicants(
 
 export async function getMyScores(
   applicantId: string,
-  graderId: string,
+  setId: string,
 ): Promise<CompleteScores | null> {
+  const [activeSet, graderId] = await Promise.all([
+    requireActiveApplicantSet(),
+    getGraderId(),
+  ]);
+  if (activeSet.id !== setId) {
+    throw new Error("The active applicant set changed while this page was open.");
+  }
+  if (!graderId) return null;
+
   const { data, error } = await supabase
     .from("written_scores")
     .select("q1_score, q2_score, q3_score, q4_score, q5_score")
+    .eq("set_id", setId)
     .eq("applicant_id", applicantId)
     .eq("grader_id", graderId)
     .maybeSingle();
@@ -66,16 +84,44 @@ export async function getMyScores(
 
 export async function submitScores(
   applicantId: string,
-  graderId: string,
   scores: CompleteScores,
+  setId: string,
 ) {
+  const [activeSet, graderId] = await Promise.all([
+    requireActiveApplicantSet(),
+    getGraderId(),
+  ]);
+  if (activeSet.id !== setId) {
+    throw new Error(
+      "The active applicant set changed while this page was open. Reload before submitting.",
+    );
+  }
+  if (!graderId) {
+    throw new Error("Pick your name before submitting scores.");
+  }
+
   const values = Object.values(scores);
   if (values.length !== 5 || !values.every(isScoreValue)) {
     throw new Error("All five questions need a score between 1 and 4.");
   }
 
+  const { data: assignment, error: assignmentError } = await supabase
+    .from("assignments")
+    .select("id")
+    .eq("set_id", setId)
+    .eq("applicant_id", applicantId)
+    .eq("grader_id", graderId)
+    .maybeSingle();
+  if (assignmentError) {
+    throw new Error(`Could not verify your assignment: ${assignmentError.message}`);
+  }
+  if (!assignment) {
+    throw new Error("This application is no longer assigned to you. Reload your queue.");
+  }
+
   const { error } = await supabase.from("written_scores").upsert(
     {
+      set_id: setId,
       applicant_id: applicantId,
       grader_id: graderId,
       q1_score: scores.q1,
@@ -85,7 +131,7 @@ export async function submitScores(
       q5_score: scores.q5,
       submitted_at: new Date().toISOString(),
     },
-    { onConflict: "applicant_id,grader_id" },
+    { onConflict: "set_id,applicant_id,grader_id" },
   );
 
   if (error) throw new Error(`Could not save your scores: ${error.message}`);

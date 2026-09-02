@@ -3,10 +3,11 @@
 import { revalidatePath } from "next/cache";
 
 import { signInAdmin, signOutAdmin } from "@/lib/admin-auth";
-import { setGraderIdentity } from "@/lib/identity";
+import { clearGraderIdentity, setGraderIdentity } from "@/lib/identity";
 
 export async function loginAsAdmin(password: string) {
   await signInAdmin(password);
+  await clearGraderIdentity();
   revalidatePath("/", "layout");
 }
 

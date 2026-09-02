@@ -19,6 +19,11 @@ export const supabase = createClient(url, secretKey, {
 
 const PAGE_SIZE = 1000;
 
+type EqualityFilter = {
+  column: string;
+  value: string;
+};
+
 /**
  * Reads every row of a table, in pages.
  *
@@ -36,15 +41,17 @@ export async function selectAllRows<T>(
   table: string,
   columns: string,
   orderBy = "id",
+  filter?: EqualityFilter,
 ): Promise<{ data: T[] | null; error: PostgrestError | null }> {
   const rows: T[] = [];
 
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
+    let query = supabase
       .from(table)
       .select(columns)
-      .order(orderBy)
-      .range(from, from + PAGE_SIZE - 1);
+      .order(orderBy);
+    if (filter) query = query.eq(filter.column, filter.value);
+    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
 
     if (error) return { data: null, error };
     if (!data) break;
@@ -78,16 +85,19 @@ export async function selectRowsIn<T>(
   columns: string,
   column: string,
   values: string[],
+  filter?: EqualityFilter,
 ): Promise<{ data: T[] | null; error: PostgrestError | null }> {
   if (values.length === 0) return { data: [], error: null };
 
   const rows: T[] = [];
 
   for (let from = 0; from < values.length; from += IN_CHUNK) {
-    const { data, error } = await supabase
+    let query = supabase
       .from(table)
       .select(columns)
       .in(column, values.slice(from, from + IN_CHUNK));
+    if (filter) query = query.eq(filter.column, filter.value);
+    const { data, error } = await query;
 
     if (error) return { data: null, error };
     rows.push(...((data ?? []) as T[]));

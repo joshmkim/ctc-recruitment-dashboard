@@ -62,7 +62,13 @@ function PreviewRow({
   );
 }
 
-export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
+export function GraderDashboard({
+  activeSetId,
+  graders,
+}: {
+  activeSetId: string;
+  graders: GraderProgress[];
+}) {
   const router = useRouter();
   const [newName, setNewName] = useState("");
   const [pending, startTransition] = useTransition();
@@ -93,7 +99,7 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
     const name = newName.trim();
     if (!name) return;
     run(async () => {
-      await addGraderAsAdmin(name);
+      await addGraderAsAdmin(name, activeSetId);
       setNewName("");
       toast.success(`${name} added.`);
     }, "Could not add grader.");
@@ -104,7 +110,7 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
     setPreview(null);
     setPreviewError(null);
     try {
-      setPreview(await previewAutoAssign());
+      setPreview(await previewAutoAssign(activeSetId));
     } catch {
       // Production masks server action messages, so there is nothing useful to
       // pass along here.
@@ -114,7 +120,7 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
 
   function confirmAutoAssign() {
     run(async () => {
-      const result = await autoAssign();
+      const result = await autoAssign(activeSetId);
       setAssignOpen(false);
 
       const parts = [
@@ -145,7 +151,11 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
   function redistribute() {
     if (!deactivating) return;
     run(async () => {
-      const result = await deactivateAndRedistribute(deactivating.id, selectedTargets);
+      const result = await deactivateAndRedistribute(
+        deactivating.id,
+        selectedTargets,
+        activeSetId,
+      );
       toast.success(
         result.notMoved
           ? `${deactivating.name} is inactive. Moved ${result.moved}; ${result.notMoved} could not be reassigned.`
@@ -193,22 +203,17 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
       </div>
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-4 border-b border-border bg-muted/40 px-5 py-3 text-xs font-medium tracking-wide text-muted-foreground uppercase sm:grid-cols-[minmax(0,1fr)_120px_100px_100px_auto]">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-border bg-muted/40 px-5 py-3 text-xs font-medium tracking-wide text-muted-foreground uppercase sm:grid-cols-[minmax(0,1fr)_80px_120px]">
           <span>Grader</span>
-          <span className="hidden sm:block">Progress</span>
-          <span>Assigned</span>
-          <span className="hidden sm:block">Graded</span>
+          <span className="hidden text-center sm:block">Progress</span>
           <span />
         </div>
         {graders.map((grader) => {
           const remaining = Math.max(grader.assigned - grader.graded, 0);
-          const percentage = grader.assigned
-            ? Math.round((grader.graded / grader.assigned) * 100)
-            : 0;
           return (
             <div
               key={grader.id}
-              className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 border-b border-border px-5 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_120px_100px_100px_auto]"
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border px-5 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_80px_120px]"
             >
               <div>
                 <p className="font-medium text-brand-dark">{grader.name}</p>
@@ -216,24 +221,21 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
                   {grader.is_active ? `${remaining} remaining` : "Inactive"}
                 </p>
               </div>
-              <div className="hidden sm:block">
-                <div className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-brand-dark" style={{ width: `${percentage}%` }} />
-                </div>
-              </div>
-              <span className="text-sm tabular-nums">{grader.assigned}</span>
-              <span className="hidden text-sm tabular-nums sm:block">{grader.graded}</span>
+              <span className="hidden justify-self-center text-center text-sm font-medium tabular-nums sm:block">
+                {grader.graded}/{grader.assigned}
+              </span>
               {grader.is_active ? (
-                <Button variant="outline" size="sm" disabled={pending} onClick={() => openDeactivate(grader)}>
+                <Button className="justify-self-end" variant="outline" size="sm" disabled={pending} onClick={() => openDeactivate(grader)}>
                   <UserMinusIcon /> Inactivate
                 </Button>
               ) : (
                 <Button
+                  className="justify-self-end"
                   variant="secondary"
                   size="sm"
                   disabled={pending}
                   onClick={() => run(async () => {
-                    await reactivateGrader(grader.id);
+                    await reactivateGrader(grader.id, activeSetId);
                     toast.success(`${grader.name} reactivated.`);
                   }, "Could not reactivate grader.")}
                 >
@@ -343,14 +345,14 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
       </Dialog>
 
       <Dialog open={Boolean(deactivating)} onOpenChange={(open) => !open && setDeactivating(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Inactivate {deactivating?.name}?</DialogTitle>
             <DialogDescription>
               Submitted scores stay intact. Only their ungraded applications will be redistributed.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-3">
+          <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium">Redistribute to</p>
               <Button
@@ -362,7 +364,7 @@ export function GraderDashboard({ graders }: { graders: GraderProgress[] }) {
               </Button>
             </div>
             {targets.length ? (
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid min-h-0 content-start gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                 {targets.map((grader) => (
                   <label key={grader.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
                     <input

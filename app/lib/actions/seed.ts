@@ -5,7 +5,15 @@ import path from "node:path";
 import { revalidatePath } from "next/cache";
 
 import { requireAdmin } from "@/lib/admin-auth";
-import { importApplicants, type ImportResult } from "@/lib/actions/import";
+import { autoAssign } from "@/lib/actions/admin";
+import {
+  activateApplicantSet,
+  anonymizeApplicantSet,
+  createGraderRoster,
+  importApplicants,
+  type ImportResult,
+} from "@/lib/actions/import";
+import { requireActiveApplicantSet } from "@/lib/applicant-sets";
 import { SEED_GRADERS } from "@/lib/seed/graders";
 import { supabase } from "@/lib/supabase";
 
@@ -26,42 +34,22 @@ function seedingAllowed() {
   return process.env.NODE_ENV !== "production";
 }
 
-export type SeedGradersResult =
-  | { ok: true; created: number; existing: number }
-  | { ok: false; message: string };
-
-/** Idempotent: names are unique in `graders`, so a second run adds nobody. */
-export async function seedGraders(): Promise<SeedGradersResult> {
-  await requireAdmin();
-  if (!seedingAllowed()) {
-    return { ok: false, message: "Seeding is disabled outside development." };
+function fakeScore(key: string, question: number) {
+  let hash = question + 1;
+  for (const character of key) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   }
-
-  const { data, error } = await supabase
-    .from("graders")
-    .upsert(
-      SEED_GRADERS.map((name) => ({ name })),
-      { onConflict: "name", ignoreDuplicates: true },
-    )
-    .select("id");
-
-  if (error) return { ok: false, message: `Could not seed graders: ${error.message}` };
-
-  const created = data?.length ?? 0;
-  revalidatePath("/", "layout");
-  revalidatePath("/admin", "layout");
-
-  return { ok: true, created, existing: SEED_GRADERS.length - created };
+  return (hash % 4) + 1;
 }
 
 /**
- * Imports the bundled seed cohort.
+ * Builds a complete test version through the same staged import actions as a
+ * real CSV: import, anonymize, create its grader roster, then activate it.
  *
- * Reads the CSV off disk and hands it to the same action the upload button uses,
- * so seeding exercises the real parser and the real upsert rather than a
- * shortcut that could drift away from them.
+ * Grader names remain globally reusable, but their active membership is added
+ * only to this new applicant set.
  */
-export async function seedApplicants(): Promise<ImportResult> {
+export async function seedTestData(): Promise<ImportResult> {
   await requireAdmin();
   if (!seedingAllowed()) {
     return { ok: false, message: "Seeding is disabled outside development." };
@@ -77,5 +65,84 @@ export async function seedApplicants(): Promise<ImportResult> {
     };
   }
 
-  return importApplicants(csv);
+  const imported = await importApplicants("seeded_version", csv);
+  if (!imported.ok) return imported;
+
+  const anonymized = await anonymizeApplicantSet(imported.setId);
+  if (!anonymized.ok) return anonymized;
+
+  const roster = await createGraderRoster(imported.setId, [...SEED_GRADERS]);
+  if (!roster.ok) return roster;
+
+  const activated = await activateApplicantSet(imported.setId);
+  if (!activated.ok) return activated;
+
+  return imported;
+}
+
+/** Assigns every applicant in the active seeded version and submits stable,
+ * varied fake scores for both graders so the deliberation view is complete. */
+export async function seedGrades() {
+  await requireAdmin();
+  if (!seedingAllowed()) {
+    return { ok: false as const, message: "Seeding is disabled outside development." };
+  }
+
+  const set = await requireActiveApplicantSet();
+  if (set.name !== "seeded_version") {
+    return {
+      ok: false as const,
+      message: "Fake grades can only be added while seeded_version is active.",
+    };
+  }
+
+  const assignmentResult = await autoAssign(set.id);
+  if (assignmentResult.shortfall) {
+    return {
+      ok: false as const,
+      message: `${assignmentResult.shortfall} grading slots could not be assigned.`,
+    };
+  }
+
+  const { data: assignments, error: assignmentError } = await supabase
+    .from("assignments")
+    .select("applicant_id, grader_id")
+    .eq("set_id", set.id);
+  if (assignmentError) {
+    return {
+      ok: false as const,
+      message: `Could not load seeded assignments: ${assignmentError.message}`,
+    };
+  }
+
+  const submittedAt = new Date().toISOString();
+  const rows = (assignments ?? []).map((assignment) => {
+    const key = `${assignment.applicant_id}:${assignment.grader_id}`;
+    return {
+      set_id: set.id,
+      applicant_id: assignment.applicant_id,
+      grader_id: assignment.grader_id,
+      q1_score: fakeScore(key, 0),
+      q2_score: fakeScore(key, 1),
+      q3_score: fakeScore(key, 2),
+      q4_score: fakeScore(key, 3),
+      q5_score: fakeScore(key, 4),
+      submitted_at: submittedAt,
+    };
+  });
+
+  for (let from = 0; from < rows.length; from += 200) {
+    const { error } = await supabase
+      .from("written_scores")
+      .upsert(rows.slice(from, from + 200), {
+        onConflict: "set_id,applicant_id,grader_id",
+      });
+    if (error) {
+      return { ok: false as const, message: `Could not seed grades: ${error.message}` };
+    }
+  }
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin", "layout");
+  return { ok: true as const, scoreCount: rows.length };
 }

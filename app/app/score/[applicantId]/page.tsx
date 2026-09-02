@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
 
-import { ApplicantResume } from "@/components/applicant-resume";
 import { ApplicantScorer } from "@/components/applicant-scorer";
 import { listMyAssignments, type Assignment } from "@/lib/actions/assignments";
 import { isAdmin } from "@/lib/admin-auth";
+import { requireActiveApplicantSet } from "@/lib/applicant-sets";
 import {
   getApplicant,
   getApplicantSummariesByIds,
@@ -18,7 +18,11 @@ export default async function ScorePage(
   // Applicant ids are stored lowercased, and this one arrives from the URL.
   const id = decodeURIComponent(applicantId).trim().toLowerCase();
 
-  const [admin, graderId] = await Promise.all([isAdmin(), getGraderId()]);
+  const [admin, graderId, set] = await Promise.all([
+    isAdmin(),
+    getGraderId(),
+    requireActiveApplicantSet(),
+  ]);
 
   // This screen only builds the signed-in grader's own queue: the previous and
   // next links walk it. So it needs their assignments and the names behind
@@ -27,7 +31,7 @@ export default async function ScorePage(
   let assignments: Assignment[] = [];
   if (graderId) {
     try {
-      assignments = await listMyAssignments(graderId);
+      assignments = await listMyAssignments();
     } catch {
       assignments = [];
     }
@@ -48,32 +52,27 @@ export default async function ScorePage(
   // application exists for an address the visitor is guessing at.
   if (!admin && !assigned) notFound();
 
-  const applicant = await getApplicant(id);
+  const applicant = await getApplicant(id, set.id);
   if (!applicant) notFound();
 
   let queue: ApplicantSummary[] = [];
   try {
     queue = await getApplicantSummariesByIds(
       assignments.map((assignment) => assignment.applicant_id),
+      set.id,
     );
   } catch {
     queue = [];
   }
 
   return (
-    <div className="mx-auto grid w-full max-w-[1600px] gap-6 px-6 py-8 lg:grid-cols-[minmax(0,7fr)_minmax(0,4fr)]">
+    <div className="mx-auto w-full max-w-[1600px] px-6 py-8">
       <ApplicantScorer
-        key={applicant.id}
+        key={`${set.id}:${applicant.id}`}
+        setId={set.id}
         applicant={applicant}
         queue={queue.map(({ id: queueId, name }) => ({ id: queueId, name }))}
         assignments={assignments}
-      />
-
-      {/* Shown at every width. It was hidden below `lg` while it was an empty
-          placeholder, but a grader on a phone still needs the resume. */}
-      <ApplicantResume
-        name={applicant.name}
-        resumeUrl={applicant.profile.resumeUrl}
       />
     </div>
   );

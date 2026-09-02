@@ -1,14 +1,17 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import type { RubricLevel } from "@/lib/questions";
 import { SCORE_LEVELS, type ScoreValue } from "@/lib/scores";
 
 export function ScoreSelector({
   value,
   onChange,
+  rubric,
 }: {
   value: ScoreValue | null;
   onChange: (value: ScoreValue) => void;
+  rubric: Record<ScoreValue, RubricLevel>;
 }) {
   const selected = SCORE_LEVELS.find((level) => level.value === value);
 
@@ -52,18 +55,23 @@ export function ScoreSelector({
         })}
       </div>
 
-      <p
-        className={cn(
-          "min-h-9 rounded-xl px-3 py-2 text-sm transition-colors",
-          selected
-            ? "bg-brand-soft text-secondary-foreground"
-            : "text-muted-foreground",
+      <div className={cn("px-1 py-1", !selected && "text-muted-foreground")}>
+        {selected ? (
+          <ul className="flex flex-col gap-1.5 text-base leading-7 text-foreground">
+            {rubric[selected.value].map((criterion) => (
+              <li key={criterion} className="flex gap-2.5">
+                <span
+                  className="mt-[0.7em] size-1.5 shrink-0 rounded-full bg-brand"
+                  aria-hidden
+                />
+                {criterion}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-base">Pick a score to see what it means.</p>
         )}
-      >
-        {selected
-          ? selected.description
-          : "Pick a score to see what it means."}
-      </p>
+      </div>
     </div>
   );
 }

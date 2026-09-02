@@ -5,10 +5,31 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   ChevronsUpDownIcon,
+  CircleHelpIcon,
+  EyeIcon,
+  EyeOffIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 
 import { DecisionSelect } from "@/components/decision-select";
+import { ApplicantResumeDialog } from "@/components/applicant-resume";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { Decision } from "@/lib/actions/admin";
 import type { DeliberationApplicant } from "@/lib/actions/deliberation";
 import {
   ASSIGNMENT_SLOTS,
@@ -18,9 +39,25 @@ import {
 import { QUESTIONS } from "@/lib/questions";
 import { cn } from "@/lib/utils";
 
-type SortKey = "overall" | "q1" | "q2" | "q3" | "q4" | "q5";
+type SortKey = "overall" | "normalized" | "q1" | "q2" | "q3" | "q4" | "q5";
+const UNDECIDED = "__undecided__";
+type DecisionSort = Decision | typeof UNDECIDED | null;
+const DECISIONS: Array<{ value: Decision; label: string }> = [
+  { value: "admit", label: "Admit" },
+  { value: "lean_admit", label: "Lean admit" },
+  { value: "lean_deny", label: "Lean deny" },
+  { value: "deny", label: "Deny" },
+];
 
-const format = (value: number) => (value ? value.toFixed(2) : "—");
+const format = (value: number) =>
+  value ? Number(value.toFixed(2)).toString() : "—";
+const OVERALL_MAX = QUESTIONS.length * 4;
+const formatOverall = (average: number) =>
+  average
+    ? `${Number((average * QUESTIONS.length).toFixed(2))}/${OVERALL_MAX}`
+    : "—";
+const formatNormalized = (total: number | null) =>
+  total === null ? "—" : `${Number(total.toFixed(2))}/${OVERALL_MAX}`;
 
 const GRID = "grid grid-cols-[minmax(0,1fr)_repeat(6,56px)] gap-2";
 
@@ -40,10 +77,18 @@ function describeProblem(applicant: DeliberationApplicant) {
   return `awaiting ${awaiting.map((grader) => grader.graderName).join(" and ")}`;
 }
 
-export function DeliberationTable({ applicants }: { applicants: DeliberationApplicant[] }) {
+export function DeliberationTable({
+  activeSetId,
+  applicants,
+}: {
+  activeSetId: string;
+  applicants: DeliberationApplicant[];
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [descending, setDescending] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showNames, setShowNames] = useState(false);
+  const [decisionFirst, setDecisionFirst] = useState<DecisionSort>(null);
 
   const problems = useMemo(
     () => applicants.filter((applicant) => !applicant.ready),
@@ -51,16 +96,37 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
   );
 
   const rows = useMemo(() => {
-    const column = sortKey === "overall" ? null : Number(sortKey[1]) - 1;
+    const column = sortKey.startsWith("q") ? Number(sortKey[1]) - 1 : null;
     return [...applicants].sort((left, right) => {
       // Anything not ready sorts to the top regardless of direction. Its averages
       // come from partial data, so ranking it against finished rows would lie.
       if (left.ready !== right.ready) return left.ready ? 1 : -1;
-      const a = column === null ? left.overallAverage : left.questionAverages[column];
-      const b = column === null ? right.overallAverage : right.questionAverages[column];
+      if (decisionFirst) {
+        const leftPreferred =
+          decisionFirst === UNDECIDED
+            ? left.decision === null
+            : left.decision === decisionFirst;
+        const rightPreferred =
+          decisionFirst === UNDECIDED
+            ? right.decision === null
+            : right.decision === decisionFirst;
+        if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1;
+      }
+      const a =
+        sortKey === "normalized"
+          ? left.normalizedTotal ?? 0
+          : column === null
+            ? left.overallAverage
+            : left.questionAverages[column];
+      const b =
+        sortKey === "normalized"
+          ? right.normalizedTotal ?? 0
+          : column === null
+            ? right.overallAverage
+            : right.questionAverages[column];
       return descending ? b - a : a - b;
     });
-  }, [applicants, descending, sortKey]);
+  }, [applicants, decisionFirst, descending, sortKey]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) setDescending((current) => !current);
@@ -72,12 +138,63 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
 
   return (
     <div className="flex flex-col gap-5">
-      <div>
-        <h2 className="font-heading text-lg font-semibold text-brand-dark">Deliberation</h2>
-        <p className="text-sm text-muted-foreground">
-          Every applicant, scored by {GRADERS_PER_APPLICANT} graders. Expand a row
-          to compare the two question by question.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-heading text-lg font-semibold text-brand-dark">Deliberation</h2>
+          <p className="text-sm text-muted-foreground">
+            Every applicant, scored by {GRADERS_PER_APPLICANT} graders. Expand a row
+            to compare the two question by question.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Dialog>
+            <DialogTrigger
+              render={
+                <Button type="button" variant="outline" size="sm">
+                  <CircleHelpIcon />
+                  Explain normalization
+                </Button>
+              }
+            />
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>How normalization works</DialogTitle>
+                <DialogDescription>
+                  Normalized scores help make results comparable when graders use
+                  the rubric more strictly or generously.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 text-sm text-secondary-foreground">
+                <p>
+                  For each applicant both graders score, we compare their totals
+                  out of 20. Repeated comparisons estimate whether each grader
+                  typically scores above or below their co-graders.
+                </p>
+                <p>
+                  That tendency is subtracted from their total before the two
+                  adjusted totals are averaged. A positive tendency means a grader
+                  is relatively generous; a negative one means they are relatively
+                  strict.
+                </p>
+                <p>
+                  Estimates use only the current applicant version and are pulled
+                  toward neutral until a grader has enough paired reviews, so a
+                  few scores cannot move an applicant much.
+                </p>
+              </div>
+            </DialogContent>
+          </Dialog>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-pressed={showNames}
+            onClick={() => setShowNames((current) => !current)}
+          >
+            {showNames ? <EyeOffIcon /> : <EyeIcon />}
+            {showNames ? "Hide names" : "Show names"}
+          </Button>
+        </div>
       </div>
 
       {problems.length ? (
@@ -91,7 +208,7 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
           <ul className="mt-2.5 flex flex-col gap-1 text-sm text-destructive">
             {problems.map((applicant) => (
               <li key={applicant.id}>
-                <span className="font-medium">{applicant.name}</span> —{" "}
+                <span className="font-medium">{labelFor(applicant, showNames)}</span> —{" "}
                 {describeProblem(applicant)}
               </li>
             ))}
@@ -126,11 +243,42 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                   descending={descending}
                   onClick={() => toggleSort("overall")}
                 />
-                <th className="px-3 py-3">Scored</th>
-                <th className="px-3 py-3" title="Largest gap between the two graders on any one question">
-                  Max gap
+                <th className="px-3 py-3 text-center">Scored</th>
+                <SortHeader
+                  label="Normalized"
+                  title="Adjusts each grader’s total for their current-version scoring tendency, estimated only from applicants they co-graded."
+                  active={sortKey === "normalized"}
+                  descending={descending}
+                  onClick={() => toggleSort("normalized")}
+                />
+                <th className="px-3 py-3">
+                  <Select
+                    items={DECISIONS}
+                    value={decisionFirst}
+                    onValueChange={(value) =>
+                      setDecisionFirst(
+                        typeof value === "string" ? (value as DecisionSort) : null,
+                      )
+                    }
+                  >
+                    <SelectTrigger
+                      size="sm"
+                      aria-label="Order applicants by decision"
+                      className="border-0 bg-transparent p-0 text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-brand-dark"
+                    >
+                      <SelectValue placeholder="Decision" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={null}>All decisions</SelectItem>
+                      <SelectItem value={UNDECIDED}>Undecided first</SelectItem>
+                      {DECISIONS.map((decision) => (
+                        <SelectItem key={decision.value} value={decision.value}>
+                          {decision.label} first
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </th>
-                <th className="px-3 py-3">Decision</th>
               </tr>
             </thead>
             <tbody>
@@ -147,7 +295,7 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                       <td className="px-3 py-3">
                         <button
                           type="button"
-                          aria-label={`Show grader breakdown for ${applicant.name}`}
+                          aria-label={`Show grader breakdown for ${labelFor(applicant, showNames)}`}
                           onClick={() => setExpanded(isExpanded ? null : applicant.id)}
                           className="rounded p-1 hover:bg-muted"
                         >
@@ -155,7 +303,7 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                         </button>
                       </td>
                       <td className="px-3 py-3">
-                        <p className="font-medium text-brand-dark">{applicant.name}</p>
+                        <ApplicantLabel applicant={applicant} showNames={showNames} />
                         {!applicant.ready ? (
                           <p className="text-xs text-destructive">{describeProblem(applicant)}</p>
                         ) : null}
@@ -166,7 +314,7 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                         </td>
                       ))}
                       <td className="px-3 py-3 text-center font-semibold tabular-nums text-brand-dark">
-                        {format(applicant.overallAverage)}
+                        {formatOverall(applicant.overallAverage)}
                       </td>
                       {/* Counted against the invariant, not against however many
                           graders happen to be assigned, so a missing slot reads
@@ -180,28 +328,35 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                         {applicant.scoredCount}/{GRADERS_PER_APPLICANT}
                       </td>
                       <td className="px-3 py-3 text-center">
-                        {applicant.questionGaps.length ? (
-                          <span
-                            className={cn(
-                              "rounded-full px-2 py-1 text-xs font-medium tabular-nums",
-                              applicant.maxGap >= SIGNIFICANT_GAP
-                                ? "bg-destructive/10 text-destructive"
-                                : "bg-brand-soft text-brand-dark",
-                            )}
-                          >
-                            {applicant.maxGap}
-                          </span>
+                        {applicant.normalizedTotal !== null ? (
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="rounded-full bg-brand-soft px-2 py-1 text-xs font-medium tabular-nums text-brand-dark">
+                              {formatNormalized(applicant.normalizedTotal)}
+                            </span>
+                            {applicant.maxGap >= SIGNIFICANT_GAP ? (
+                              <span className="text-xs font-medium tabular-nums text-destructive">
+                                Gap {applicant.maxGap}
+                              </span>
+                            ) : null}
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
                       </td>
                       <td className="px-3 py-3">
-                        <DecisionSelect applicantId={applicant.id} decision={applicant.decision} />
+                        <DecisionSelect
+                          activeSetId={activeSetId}
+                          applicantId={applicant.id}
+                          decision={applicant.decision}
+                        />
                       </td>
                     </tr>
                     {isExpanded ? (
                       <tr className="border-t border-border bg-muted/25">
                         <td colSpan={11} className="px-5 py-4">
+                          <div className="mb-3">
+                            <ApplicantResumeDialog resumeUrl={applicant.resumeUrl} />
+                          </div>
                           <div className="max-w-3xl overflow-hidden rounded-xl border border-border bg-card">
                             <div className={cn(GRID, "border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground")}>
                               <span>Grader</span>
@@ -217,13 +372,17 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
                                 <div key={slot} className={cn(GRID, "border-b border-border px-3 py-2 text-sm last:border-b-0")}>
                                   <span className="truncate">
                                     {grader ? (
-                                      <span className="font-medium">{grader.graderName}</span>
+                                      <>
+                                        <span className="font-medium">{grader.graderName}</span>
+                                        <span className="block text-xs text-muted-foreground">
+                                          {grader.submitted
+                                            ? normalizationLabel(grader)
+                                            : "not submitted"}
+                                        </span>
+                                      </>
                                     ) : (
                                       <span className="text-destructive">Slot {slot} unassigned</span>
                                     )}
-                                    {grader && !grader.submitted ? (
-                                      <span className="text-destructive"> · not submitted</span>
-                                    ) : null}
                                   </span>
                                   {QUESTIONS.map((question, index) => (
                                     <span
@@ -282,6 +441,57 @@ export function DeliberationTable({ applicants }: { applicants: DeliberationAppl
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+function labelFor(applicant: DeliberationApplicant, showNames: boolean) {
+  return showNames ? applicant.fullName : applicant.name;
+}
+
+function normalizationLabel(grader: DeliberationApplicant["graders"][number]) {
+  if (!grader.hasSufficientHistory) {
+    return `Insufficient history (${grader.normalization.pairedReviews} paired reviews)`;
+  }
+
+  const effect = grader.normalization.effect;
+  if (Math.abs(effect) < 0.05) return "Neutral scoring tendency";
+  return `${effect > 0 ? "+" : "−"}${Math.abs(effect).toFixed(1)} ${
+    effect > 0 ? "generous" : "strict"
+  }`;
+}
+
+function ApplicantLabel({
+  applicant,
+  showNames,
+}: {
+  applicant: DeliberationApplicant;
+  showNames: boolean;
+}) {
+  if (!showNames) {
+    return (
+      <p className="flex items-baseline gap-2">
+        <span className="font-mono text-sm font-medium tracking-wide text-brand-dark">
+          {applicant.name}
+        </span>
+        {applicant.graduationYear ? (
+          <span className="text-xs text-muted-foreground">{applicant.graduationYear}</span>
+        ) : null}
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <p className="font-medium text-brand-dark">{applicant.fullName}</p>
+      <p className="flex items-baseline gap-2">
+        <span className="font-mono text-xs tracking-wide text-muted-foreground">
+          {applicant.name}
+        </span>
+        {applicant.graduationYear ? (
+          <span className="text-xs text-muted-foreground">{applicant.graduationYear}</span>
+        ) : null}
+      </p>
     </div>
   );
 }

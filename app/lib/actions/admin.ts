@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 
 import { requireAdmin } from "@/lib/admin-auth";
+import {
+  assertActiveSetUnchanged,
+} from "@/lib/applicant-sets";
 import { getApplicants } from "@/lib/applications";
 import {
   ASSIGNMENT_SLOTS,
@@ -10,9 +13,10 @@ import {
   type AssignmentSlot,
 } from "@/lib/grading";
 import { selectAllRows, supabase } from "@/lib/supabase";
-import { addGrader } from "@/lib/actions/graders";
+import { addGraderForSet, listGraders } from "@/lib/actions/graders";
 
 type AssignmentRow = {
+  set_id: string;
   applicant_id: string;
   grader_id: string;
   slot: AssignmentSlot;
@@ -24,20 +28,24 @@ function refreshAdmin() {
   revalidatePath("/admin", "layout");
 }
 
-async function loadAssignmentState() {
+async function loadAssignmentState(setId: string) {
   // Assignment balancing counts each grader's existing load, so a partial read
   // would pile new work onto graders who already have plenty.
-  const [{ data: graders, error: graderError }, { data: assignments, error: assignmentError }] =
+  const [graders, { data: assignments, error: assignmentError }] =
     await Promise.all([
-      supabase.from("graders").select("id, name, is_active").order("name"),
-      selectAllRows<AssignmentRow>("assignments", "applicant_id, grader_id, slot"),
+      listGraders(setId),
+      selectAllRows<AssignmentRow>(
+        "assignments",
+        "set_id, applicant_id, grader_id, slot",
+        "id",
+        { column: "set_id", value: setId },
+      ),
     ]);
 
-  if (graderError) throw new Error(`Could not load graders: ${graderError.message}`);
   if (assignmentError) throw new Error(`Could not load assignments: ${assignmentError.message}`);
 
   return {
-    graders: (graders ?? []) as GraderRow[],
+    graders,
     assignments: assignments ?? [],
   };
 }
@@ -105,7 +113,7 @@ function planAssignments(
         break;
       }
 
-      const assignment = { applicant_id: applicant.id, grader_id: target.id, slot };
+      const assignment = { set_id: "", applicant_id: applicant.id, grader_id: target.id, slot };
       inserts.push(assignment);
       current.push(assignment);
       filled.add(slot);
@@ -133,11 +141,11 @@ function planAssignments(
  * admin's write to land between another's read and write, so it is reported
  * rather than handled; assignment is idempotent, so retrying settles it.
  */
-async function insertNewAssignments(inserts: AssignmentRow[]) {
+async function insertNewAssignments(setId: string, inserts: AssignmentRow[]) {
   const { data, error } = await supabase
     .from("assignments")
-    .upsert(inserts, {
-      onConflict: "applicant_id,slot",
+    .upsert(inserts.map((insert) => ({ ...insert, set_id: setId })), {
+      onConflict: "set_id,applicant_id,slot",
       ignoreDuplicates: true,
     })
     .select("applicant_id");
@@ -161,15 +169,18 @@ export type AutoAssignPreview = {
 };
 
 /** What `autoAssign` would do, so the confirmation can show it before writing. */
-export async function previewAutoAssign(): Promise<AutoAssignPreview> {
+export async function previewAutoAssign(expectedSetId: string): Promise<AutoAssignPreview> {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
 
   const [applicants, { graders, assignments }, { data: submitted, error }] = await Promise.all([
-    getApplicants(),
-    loadAssignmentState(),
-    selectAllRows<{ applicant_id: string; grader_id: string }>(
+    getApplicants(set.id),
+    loadAssignmentState(set.id),
+    selectAllRows<{ set_id: string; applicant_id: string; grader_id: string }>(
       "written_scores",
-      "applicant_id, grader_id",
+      "set_id, applicant_id, grader_id",
+      "id",
+      { column: "set_id", value: set.id },
     ),
   ]);
   if (error) throw new Error(`Could not load submitted scores: ${error.message}`);
@@ -186,12 +197,13 @@ export async function previewAutoAssign(): Promise<AutoAssignPreview> {
   };
 }
 
-export async function autoAssign() {
+export async function autoAssign(expectedSetId: string) {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
 
   const [applicants, { graders, assignments }] = await Promise.all([
-    getApplicants(),
-    loadAssignmentState(),
+    getApplicants(set.id),
+    loadAssignmentState(set.id),
   ]);
   const activeCount = graders.filter((grader) => grader.is_active).length;
   if (activeCount < GRADERS_PER_APPLICANT) {
@@ -204,7 +216,7 @@ export async function autoAssign() {
 
   let assigned = 0;
   if (inserts.length) {
-    const { created, error } = await insertNewAssignments(inserts);
+    const { created, error } = await insertNewAssignments(set.id, inserts);
     if (error) throw new Error(`Could not assign graders: ${error.message}`);
     assigned = created;
   }
@@ -219,24 +231,28 @@ export async function autoAssign() {
   };
 }
 
-export async function addGraderAsAdmin(name: string) {
+export async function addGraderAsAdmin(name: string, expectedSetId: string) {
   await requireAdmin();
-  return addGrader(name);
+  return addGraderForSet(name, expectedSetId);
 }
 
 export async function deactivateAndRedistribute(
   graderId: string,
   targetGraderIds: string[],
+  expectedSetId: string,
 ) {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
 
   // A missed score row here would look like unfinished work and get reassigned,
   // so this read has to cover every submission.
   const [{ graders, assignments }, { data: submitted, error: scoreError }] = await Promise.all([
-    loadAssignmentState(),
-    selectAllRows<{ applicant_id: string; grader_id: string }>(
+    loadAssignmentState(set.id),
+    selectAllRows<{ set_id: string; applicant_id: string; grader_id: string }>(
       "written_scores",
-      "applicant_id, grader_id",
+      "set_id, applicant_id, grader_id",
+      "id",
+      { column: "set_id", value: set.id },
     ),
   ]);
   if (scoreError) throw new Error(`Could not load submitted scores: ${scoreError.message}`);
@@ -276,6 +292,7 @@ export async function deactivateAndRedistribute(
     // slot is left empty, which the deliberation view reports as understaffed.
     if (!target) continue;
     const replacement = {
+      set_id: set.id,
       applicant_id: assignment.applicant_id,
       grader_id: target.id,
       slot: assignment.slot,
@@ -285,15 +302,17 @@ export async function deactivateAndRedistribute(
   }
 
   const { error: deactivateError } = await supabase
-    .from("graders")
+    .from("applicant_set_graders")
     .update({ is_active: false })
-    .eq("id", graderId);
+    .eq("set_id", set.id)
+    .eq("grader_id", graderId);
   if (deactivateError) throw new Error(`Could not deactivate grader: ${deactivateError.message}`);
 
   if (ungraded.length) {
     const { error: deleteError } = await supabase
       .from("assignments")
       .delete()
+      .eq("set_id", set.id)
       .eq("grader_id", graderId)
       .in(
         "applicant_id",
@@ -304,7 +323,7 @@ export async function deactivateAndRedistribute(
 
   let moved = 0;
   if (inserts.length) {
-    const { created, error: insertError } = await insertNewAssignments(inserts);
+    const { created, error: insertError } = await insertNewAssignments(set.id, inserts);
     if (insertError) throw new Error(`Could not redistribute assignments: ${insertError.message}`);
     moved = created;
   }
@@ -316,38 +335,47 @@ export async function deactivateAndRedistribute(
   };
 }
 
-export async function reactivateGrader(graderId: string) {
+export async function reactivateGrader(graderId: string, expectedSetId: string) {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
   const { error } = await supabase
-    .from("graders")
+    .from("applicant_set_graders")
     .update({ is_active: true })
-    .eq("id", graderId);
+    .eq("set_id", set.id)
+    .eq("grader_id", graderId);
   if (error) throw new Error(`Could not reactivate grader: ${error.message}`);
   refreshAdmin();
 }
 
 export type Decision = "admit" | "lean_admit" | "lean_deny" | "deny";
 
-export async function setDecision(applicantId: string, decision: Decision) {
+export async function setDecision(
+  applicantId: string,
+  decision: Decision,
+  expectedSetId: string,
+) {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
   if (!["admit", "lean_admit", "lean_deny", "deny"].includes(decision)) {
     throw new Error("Invalid decision.");
   }
 
   const { error } = await supabase.from("decisions").upsert(
-    { applicant_id: applicantId, decision, decided_at: new Date().toISOString() },
-    { onConflict: "applicant_id" },
+    { set_id: set.id, applicant_id: applicantId, decision, decided_at: new Date().toISOString() },
+    { onConflict: "set_id,applicant_id" },
   );
   if (error) throw new Error(`Could not save decision: ${error.message}`);
   refreshAdmin();
 }
 
-export async function clearDecision(applicantId: string) {
+export async function clearDecision(applicantId: string, expectedSetId: string) {
   await requireAdmin();
+  const set = await assertActiveSetUnchanged(expectedSetId);
 
   const { error } = await supabase
     .from("decisions")
     .delete()
+    .eq("set_id", set.id)
     .eq("applicant_id", applicantId);
   if (error) throw new Error(`Could not clear decision: ${error.message}`);
   refreshAdmin();
