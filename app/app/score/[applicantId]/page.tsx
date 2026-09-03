@@ -6,6 +6,7 @@ import { isAdmin } from "@/lib/admin-auth";
 import { requireActiveApplicantSet } from "@/lib/applicant-sets";
 import {
   getApplicant,
+  getApplicantIdByAlias,
   getApplicantSummariesByIds,
   type ApplicantSummary,
 } from "@/lib/applications";
@@ -15,14 +16,15 @@ export default async function ScorePage(
   props: PageProps<"/score/[applicantId]">,
 ) {
   const { applicantId } = await props.params;
-  // Applicant ids are stored lowercased, and this one arrives from the URL.
-  const id = decodeURIComponent(applicantId).trim().toLowerCase();
+  const alias = decodeURIComponent(applicantId).trim();
 
   const [admin, graderId, set] = await Promise.all([
     isAdmin(),
     getGraderId(),
     requireActiveApplicantSet(),
   ]);
+  const id = await getApplicantIdByAlias(alias, set.id);
+  if (!id) notFound();
 
   // This screen only builds the signed-in grader's own queue: the previous and
   // next links walk it. So it needs their assignments and the names behind
@@ -71,7 +73,7 @@ export default async function ScorePage(
         key={`${set.id}:${applicant.id}`}
         setId={set.id}
         applicant={applicant}
-        queue={queue.map(({ id: queueId, name }) => ({ id: queueId, name }))}
+        queue={queue.map(({ id: queueId, name }) => ({ id: queueId, alias: name }))}
         assignments={assignments}
       />
     </div>

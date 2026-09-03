@@ -52,7 +52,7 @@ export function ApplicantScorer({
 }: {
   setId: string;
   applicant: Applicant;
-  queue: { id: string; name: string }[];
+  queue: { id: string; alias: string }[];
   assignments: Assignment[];
 }) {
   const { grader } = useGrader();
@@ -150,7 +150,7 @@ export function ApplicantScorer({
         window.localStorage.removeItem(draftKey(setId, grader.id, applicant.id));
         setConfirmOpen(false);
         toast.success("Scores saved");
-        router.push(next ? `/score/${encodeURIComponent(next.id)}` : "/");
+        router.push(next ? `/score/${encodeURIComponent(next.alias)}` : "/");
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Could not save your scores.",
@@ -271,7 +271,7 @@ export function ApplicantScorer({
             disabled={!previous}
             onClick={() =>
               previous &&
-              router.push(`/score/${encodeURIComponent(previous.id)}`)
+              router.push(`/score/${encodeURIComponent(previous.alias)}`)
             }
           >
             <ArrowLeftIcon />
@@ -284,7 +284,7 @@ export function ApplicantScorer({
                 variant="ghost"
                 size="lg"
                 onClick={() =>
-                  router.push(`/score/${encodeURIComponent(next.id)}`)
+                  router.push(`/score/${encodeURIComponent(next.alias)}`)
                 }
               >
                 Skip for now

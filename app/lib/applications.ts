@@ -230,3 +230,20 @@ export async function getApplicant(id: string, setId?: string): Promise<Applican
     profile: applicant.profile,
   };
 }
+
+/** Resolve the anonymized URL alias before loading an applicant's full response. */
+export async function getApplicantIdByAlias(
+  alias: string,
+  setId?: string,
+): Promise<string | null> {
+  const activeSet = setId ? null : await requireActiveApplicantSet();
+  const { data, error } = await supabase
+    .from("applicants")
+    .select("applicant_id")
+    .eq("set_id", setId ?? activeSet!.id)
+    .eq("alias", alias.trim().toUpperCase())
+    .maybeSingle<{ applicant_id: string }>();
+
+  if (error) throw new Error(`Could not resolve applicant alias: ${error.message}`);
+  return data?.applicant_id ?? null;
+}

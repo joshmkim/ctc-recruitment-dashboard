@@ -66,7 +66,7 @@ export function ApplicantList({
       {showingEveryone ? null : (
         <QueueCard
           count={applicants.length}
-          firstId={applicants[0]?.id}
+          firstAlias={applicants[0]?.name}
           graderName={grader?.name}
         />
       )}
@@ -109,7 +109,7 @@ export function ApplicantList({
             >
               <div className="min-w-0">
                 <Link
-                  href={`/score/${encodeURIComponent(applicant.id)}`}
+                  href={`/score/${encodeURIComponent(applicant.name)}`}
                   className="font-mono font-medium tracking-wide text-brand-dark hover:underline"
                 >
                   {applicant.name}
@@ -286,11 +286,11 @@ function AssignedGrader({
 
 function QueueCard({
   count,
-  firstId,
+  firstAlias,
   graderName,
 }: {
   count: number;
-  firstId?: string;
+  firstAlias?: string;
   graderName?: string;
 }) {
   if (!graderName) {
@@ -315,10 +315,10 @@ function QueueCard({
           </p>
         ) : null}
       </div>
-      {firstId ? (
+      {firstAlias ? (
         <Button
           size="lg"
-          render={<Link href={`/score/${encodeURIComponent(firstId)}`} />}
+          render={<Link href={`/score/${encodeURIComponent(firstAlias)}`} />}
         >
           Start scoring
         </Button>
