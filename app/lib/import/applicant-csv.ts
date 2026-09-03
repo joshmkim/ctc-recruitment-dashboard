@@ -1,5 +1,6 @@
 import Papa from "papaparse";
 
+import { parseFormTimestamp } from "./form-timestamp";
 import { QUESTION_IDS, type QuestionId } from "@/lib/questions";
 
 /**
@@ -19,10 +20,6 @@ import { QUESTION_IDS, type QuestionId } from "@/lib/questions";
  * later answer shifts one column left, silently filing each answer under the
  * previous question's prompt. Nothing about that looks like an error.
  */
-
-/** Timezone the form's Timestamp column is written in — the form owner's Google
- *  setting, not the viewer's. Wrong value here skews `submittedAt` by hours. */
-const FORM_TIME_ZONE = "America/Los_Angeles";
 
 /** Answers shorter than this are almost certainly a placeholder or a parse
  *  failure rather than a real response, so they are reported for a human to
@@ -85,7 +82,7 @@ const COLUMNS = {
   q1: "what is important to you",
   q2: "community is a core pillar",
   q3: "write a short thank-you note",
-  q4: "please describe any relevant technical or project experiences",
+  q4: "please briefly describe any relevant technical or group work experiences",
   q5: "at ctc, one of our favorite traditions",
   commitments: "please list out any relevant classes",
 } as const;
@@ -147,65 +144,6 @@ function mapColumns(headers: string[]): Record<ColumnKey, number> {
   }
 
   return mapping;
-}
-
-/** Offset in milliseconds between UTC and `timeZone` at a given instant. */
-function zoneOffset(instant: number, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(instant);
-
-  const field = (type: string) => Number(parts.find((part) => part.type === type)?.value);
-  const asUtc = Date.UTC(
-    field("year"),
-    field("month") - 1,
-    field("day"),
-    field("hour"),
-    field("minute"),
-    field("second"),
-  );
-
-  return asUtc - instant;
-}
-
-/**
- * Turns the sheet's `8/11/2026 11:45:20` into an ISO instant.
- *
- * The column is a wall clock in the form's timezone with no offset written down,
- * so `new Date(value)` would read it as the server's local time — which in
- * production is UTC, putting every submission seven hours early and reordering
- * the grading queue around midnight.
- *
- * Corrects the naive UTC reading by the zone's offset at that moment. During the
- * hour repeated when clocks go back, a wall clock genuinely names two instants
- * and this picks one; an hour of ambiguity once a year only affects display and
- * ordering, so it is not worth a timezone library.
- */
-function parseTimestamp(value: string) {
-  const match = value
-    .trim()
-    .match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (!match) return null;
-
-  const [, month, day, year, hour, minute, second] = match;
-  const naive = Date.UTC(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second ?? "0"),
-  );
-
-  const corrected = naive - zoneOffset(naive, FORM_TIME_ZONE);
-  return Number.isNaN(corrected) ? null : new Date(corrected).toISOString();
 }
 
 /** Empty strings become null so the column reads as "not provided" rather than
@@ -325,7 +263,7 @@ export function parseApplicantCsv(csv: string): ParseReport {
       warnings.push(`${email} (${rowLabel}) has no name; showing the email instead.`);
     }
 
-    const submittedAt = parseTimestamp(at("timestamp") ?? "");
+    const submittedAt = parseFormTimestamp(at("timestamp") ?? "");
     if (!submittedAt) {
       throw new Error(
         `Could not read the timestamp "${at("timestamp")}" for ${email} (${rowLabel}). ` +

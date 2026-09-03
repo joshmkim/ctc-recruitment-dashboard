@@ -16,24 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-/**
- * Drive file ids out of whatever the form wrote into the Resume column.
- *
- * A file-upload question records `open?id=<id>`, but the same column picks up
- * `file/d/<id>/view` links when anything is moved or re-shared in Drive, so both
- * are read. When a question allows several uploads the cell holds every URL,
- * comma-separated — hence a list rather than a single id, so a second attachment
- * cannot silently disappear behind the first.
- */
-function driveFileIds(resumeUrl: string) {
-  const ids = resumeUrl
-    .split(/[,\s]+/)
-    .map((part) => part.match(/(?:\/file\/d\/|[?&]id=)([\w-]{10,})/)?.[1])
-    .filter((id): id is string => Boolean(id));
-
-  return [...new Set(ids)];
-}
+import { driveFileIds, drivePreviewUrl } from "@/lib/drive";
 
 /**
  * The first http(s) URL in the column, or null.
@@ -70,7 +53,7 @@ function ResumeFrame({ id }: { id: string }) {
       // into a Google account that can see the file, so the form's response
       // folder has to be shared with the club, and Safari's third-party cookie
       // blocking can leave the frame empty — hence the Drive link alongside it.
-      src={`https://drive.google.com/file/d/${id}/preview`}
+      src={drivePreviewUrl(id)}
       title="Resume"
       className="size-full rounded-lg border border-border bg-muted"
       allow="autoplay"
