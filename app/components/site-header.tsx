@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { BackToHome } from "@/components/back-to-home";
 import { GraderIdentity } from "@/components/grader-identity";
 import { isAdmin } from "@/lib/admin-auth";
 
@@ -11,7 +12,7 @@ export async function SiteHeader() {
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
       <div className="mx-auto flex h-16 w-full max-w-[1600px] items-center justify-between gap-4 px-6">
         <div className="flex items-center gap-3">
-          <Link href="/" className="flex items-center gap-3">
+          <Link href="/written" className="flex items-center gap-3">
             <Image
               src="/CTC_Logo_2017.png"
               alt=""
@@ -36,7 +37,10 @@ export async function SiteHeader() {
             </>
           ) : null}
         </div>
-        <GraderIdentity admin={admin} />
+        <div className="flex items-center gap-3">
+          <BackToHome />
+          <GraderIdentity admin={admin} />
+        </div>
       </div>
     </header>
   );

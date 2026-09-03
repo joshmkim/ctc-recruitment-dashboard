@@ -28,7 +28,7 @@ export async function importRound1Interviews(csv: string): Promise<InterviewImpo
     const { error: insertError } = await supabase.from("round1_interviews").upsert(inserts, { onConflict: "set_id,applicant_id,role" });
     if (insertError) return { ok: false, message: insertError.message };
   }
-  revalidatePath("/admin", "layout");
+  revalidatePath("/interviews", "layout");
   return { ok: true, imported: inserts.length, skipped };
 }
 
@@ -45,5 +45,5 @@ export async function getRound1Applicants(): Promise<Round1Applicant[]> {
   return (applicants.data ?? []).map((applicant) => { const list = interviewMap.get(applicant.applicant_id) ?? []; return { id: applicant.applicant_id, name: applicant.alias ?? "—", fullName: applicant.name, graduationYear: applicant.graduation_year, interviews: list, total: list.length === 2 ? list.reduce((sum, item) => sum + item.total, 0) : null, decision: decisionMap.get(applicant.applicant_id) ?? null }; });
 }
 export async function getRound1Detail(applicantId: string) { await requireAdmin(); const set = await requireActiveApplicantSet(); const { data, error } = await supabase.from("round1_interviews").select(`role, interviewer_id, submitted_at, ${scoreColumns}, final_decision, comments, reflections`).eq("set_id", set.id).eq("applicant_id", applicantId); if (error) throw new Error(error.message); return (data ?? []).map((row) => asInterview(row)); }
-export async function setRound1Decision(applicantId: string, decision: Decision, expectedSetId: string) { await requireAdmin(); const set = await assertActiveSetUnchanged(expectedSetId); if (!["admit", "lean_admit", "lean_deny", "deny"].includes(decision)) throw new Error("Invalid decision."); const { error } = await supabase.from("round1_decisions").upsert({ set_id: set.id, applicant_id: applicantId, decision, decided_at: new Date().toISOString() }, { onConflict: "set_id,applicant_id" }); if (error) throw new Error(error.message); revalidatePath("/admin", "layout"); }
-export async function clearRound1Decision(applicantId: string, expectedSetId: string) { await requireAdmin(); const set = await assertActiveSetUnchanged(expectedSetId); const { error } = await supabase.from("round1_decisions").delete().eq("set_id", set.id).eq("applicant_id", applicantId); if (error) throw new Error(error.message); revalidatePath("/admin", "layout"); }
+export async function setRound1Decision(applicantId: string, decision: Decision, expectedSetId: string) { await requireAdmin(); const set = await assertActiveSetUnchanged(expectedSetId); if (!["admit", "lean_admit", "lean_deny", "deny"].includes(decision)) throw new Error("Invalid decision."); const { error } = await supabase.from("round1_decisions").upsert({ set_id: set.id, applicant_id: applicantId, decision, decided_at: new Date().toISOString() }, { onConflict: "set_id,applicant_id" }); if (error) throw new Error(error.message); revalidatePath("/interviews", "layout"); }
+export async function clearRound1Decision(applicantId: string, expectedSetId: string) { await requireAdmin(); const set = await assertActiveSetUnchanged(expectedSetId); const { error } = await supabase.from("round1_decisions").delete().eq("set_id", set.id).eq("applicant_id", applicantId); if (error) throw new Error(error.message); revalidatePath("/interviews", "layout"); }
