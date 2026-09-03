@@ -42,7 +42,20 @@ export async function getRound1Applicants(): Promise<Round1Applicant[]> {
   for (const result of [applicants, interviews, decisions]) if (result.error) throw new Error(result.error.message);
   const interviewMap = new Map<string, Interview[]>(); for (const row of interviews.data ?? []) { const item = asInterview(row); const list = interviewMap.get(String(row.applicant_id)) ?? []; list.push(item); interviewMap.set(String(row.applicant_id), list); }
   const decisionMap = new Map((decisions.data ?? []).map((row) => [row.applicant_id, row.decision]));
-  return (applicants.data ?? []).map((applicant) => { const list = interviewMap.get(applicant.applicant_id) ?? []; return { id: applicant.applicant_id, name: applicant.alias ?? "—", fullName: applicant.name, graduationYear: applicant.graduation_year, interviews: list, total: list.length === 2 ? list.reduce((sum, item) => sum + item.total, 0) : null, decision: decisionMap.get(applicant.applicant_id) ?? null }; });
+  return (applicants.data ?? [])
+    .map((applicant) => {
+      const list = interviewMap.get(applicant.applicant_id) ?? [];
+      return {
+        id: applicant.applicant_id,
+        name: applicant.alias ?? "—",
+        fullName: applicant.name,
+        graduationYear: applicant.graduation_year,
+        interviews: list,
+        total: list.length === 2 ? list.reduce((sum, item) => sum + item.total, 0) : null,
+        decision: decisionMap.get(applicant.applicant_id) ?? null,
+      };
+    })
+    .filter((applicant) => applicant.interviews.length > 0);
 }
 export async function getRound1Detail(applicantId: string) { await requireAdmin(); const set = await requireActiveApplicantSet(); const { data, error } = await supabase.from("round1_interviews").select(`role, interviewer_id, submitted_at, ${scoreColumns}, final_decision, comments, reflections`).eq("set_id", set.id).eq("applicant_id", applicantId); if (error) throw new Error(error.message); return (data ?? []).map((row) => asInterview(row)); }
 export async function setRound1Decision(applicantId: string, decision: Decision, expectedSetId: string) { await requireAdmin(); const set = await assertActiveSetUnchanged(expectedSetId); if (!["admit", "lean_admit", "lean_deny", "deny"].includes(decision)) throw new Error("Invalid decision."); const { error } = await supabase.from("round1_decisions").upsert({ set_id: set.id, applicant_id: applicantId, decision, decided_at: new Date().toISOString() }, { onConflict: "set_id,applicant_id" }); if (error) throw new Error(error.message); revalidatePath("/interviews", "layout"); }

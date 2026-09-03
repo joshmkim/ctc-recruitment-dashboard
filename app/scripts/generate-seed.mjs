@@ -583,6 +583,7 @@ function buildApplicant() {
       ? `https://www.linkedin.com/in/${first.toLowerCase()}${last.toLowerCase().replace(/[^a-z]/g, "")}/`
       : "",
     role: pickWeighted(ROLES),
+    tier,
     ...answers,
     commitments: buildCommitments(),
   };
@@ -600,6 +601,7 @@ for (let index = 0; index < RESUBMISSIONS; index += 1) {
   resubmissions.push({
     ...original,
     ...buildAnswers("strong", original.name.split(" ")[0]),
+    tier: "strong",
     timestamp: new Date(original.timestamp.getTime() + 3600_000 * (2 + Math.floor(random() * 20))),
     commitments: buildCommitments(),
   });
@@ -677,4 +679,39 @@ writeFileSync("seed/seed_applicants.csv", `${lines.join("\n")}\n`, "utf8");
 console.log(
   `seed/seed_applicants.csv: ${rows.length} rows, ${applicants.length} applicants, ` +
     `${resubmissions.length} resubmissions.`,
+);
+
+// ---------------------------------------------------------------------------
+// Round 1 interview cohort
+//
+// Sixty people "pass" written and go on to interviews. Strong essays first,
+// then mid, then weak, ties broken by email. Last-write wins on email so a
+// resubmission that upgraded the answers can pull someone through. This list
+// is emails rather than aliases: aliases are assigned at anonymize time, and
+// the seed action resolves them from the active set.
+// ---------------------------------------------------------------------------
+
+const ROUND1_PASSED = 60;
+const TIER_RANK = { strong: 0, mid: 1, weak: 2 };
+const latestByEmail = new Map();
+for (const row of rows) latestByEmail.set(row.email, row);
+const passed = [...latestByEmail.values()]
+  .sort(
+    (left, right) =>
+      TIER_RANK[left.tier] - TIER_RANK[right.tier] ||
+      left.email.localeCompare(right.email),
+  )
+  .slice(0, ROUND1_PASSED);
+
+writeFileSync(
+  "seed/seed_round1_passed.csv",
+  ["Email Address", ...passed.map((row) => row.email)].join("\n") + "\n",
+  "utf8",
+);
+
+const passedTiers = { strong: 0, mid: 0, weak: 0 };
+for (const row of passed) passedTiers[row.tier] += 1;
+console.log(
+  `seed/seed_round1_passed.csv: ${passed.length} applicants ` +
+    `(${passedTiers.strong} strong, ${passedTiers.mid} mid, ${passedTiers.weak} weak).`,
 );

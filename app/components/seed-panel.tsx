@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { ClipboardCheckIcon, DatabaseIcon, Loader2Icon, SproutIcon } from "lucide-react";
+import { ClipboardCheckIcon, DatabaseIcon, Loader2Icon, MessagesSquareIcon, SproutIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImportFailure, ImportReport } from "@/components/import-summary";
@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ImportSummary } from "@/lib/actions/import";
-import { seedGrades, seedTestData } from "@/lib/actions/seed";
+import { seedGrades, seedRound1Interviews, seedTestData } from "@/lib/actions/seed";
 
 export function SeedPanel({ project }: { project: string }) {
   const router = useRouter();
@@ -24,7 +24,7 @@ export function SeedPanel({ project }: { project: string }) {
   const [confirming, setConfirming] = useState(false);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const [running, setRunning] = useState<"data" | "grades" | null>(null);
+  const [running, setRunning] = useState<"data" | "grades" | "round1" | null>(null);
 
   function run() {
     setSummary(null);
@@ -41,6 +41,29 @@ export function SeedPanel({ project }: { project: string }) {
         }
         setSummary(result);
         toast.success(`Created seeded_version with ${result.applicantCount} applicants and 40 graders.`);
+        router.refresh();
+      } finally {
+        setRunning(null);
+      }
+    });
+  }
+
+  function runRound1() {
+    setFailure(null);
+    setRunning("round1");
+    startTransition(async () => {
+      try {
+        const result = await seedRound1Interviews();
+        if (!result.ok) {
+          setFailure(result.message);
+          return;
+        }
+        const skipped = result.skipped?.length
+          ? ` Skipped ${result.skipped.length}.`
+          : "";
+        toast.success(
+          `Passed ${result.passed} applicants to round 1 and imported ${result.imported} interviews.${skipped}`,
+        );
         router.refresh();
       } finally {
         setRunning(null);
@@ -77,7 +100,9 @@ export function SeedPanel({ project }: { project: string }) {
           <p className="mt-1 max-w-[68ch] text-sm text-secondary-foreground">
             Creates and activates a new <span className="font-mono">seeded_version</span>{" "}
             with 260 applicants and 40 graders using the same import,
-            anonymization, and roster flow as a CSV upload.
+            anonymization, and roster flow as a CSV upload. After that, seed
+            grades for written deliberation and round 1 interviews for the 60
+            applicants who passed written.
           </p>
           <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
             <DatabaseIcon className="size-3.5 shrink-0" />
@@ -108,6 +133,18 @@ export function SeedPanel({ project }: { project: string }) {
             <ClipboardCheckIcon />
           )}
           Seed grades
+        </Button>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={runRound1}
+        >
+          {running === "round1" ? (
+            <Loader2Icon className="animate-spin" />
+          ) : (
+            <MessagesSquareIcon />
+          )}
+          Seed round 1 interviews
         </Button>
       </div>
 

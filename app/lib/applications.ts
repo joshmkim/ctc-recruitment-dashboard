@@ -210,7 +210,11 @@ export async function getApplicantSummariesByIds(
   return (data ?? []).map(toSummary).sort(bySubmittedAt);
 }
 
-export async function getApplicant(id: string, setId?: string): Promise<Applicant | null> {
+export async function getApplicant(
+  id: string,
+  setId?: string,
+  options?: { includeFullName?: boolean },
+): Promise<Applicant | null> {
   const activeSet = setId ? null : await requireActiveApplicantSet();
   const { data, error } = await supabase
     .from("applicants")
@@ -222,6 +226,7 @@ export async function getApplicant(id: string, setId?: string): Promise<Applican
   if (error) throw new Error(`Could not load applicant: ${error.message}`);
   if (!data) return null;
   const applicant = toApplicant(data);
+  if (options?.includeFullName) return applicant;
   return {
     id: applicant.id,
     name: applicant.name,

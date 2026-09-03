@@ -13,13 +13,16 @@ import {
   importApplicants,
   type ImportResult,
 } from "@/lib/actions/import";
+import { importRound1Interviews } from "@/lib/actions/round1";
 import { requireActiveApplicantSet } from "@/lib/applicant-sets";
 import { SEED_GRADERS } from "@/lib/seed/graders";
+import { buildRound1SeedCsv, ROUND1_PASSED } from "@/lib/seed/round1";
 import { supabase } from "@/lib/supabase";
 
 // Not exported: a `"use server"` module may only export async functions, and a
 // single non-function export silently strips every export in the file.
 const SEED_CSV = "seed/seed_applicants.csv";
+const SEED_ROUND1_PASSED = "seed/seed_round1_passed.csv";
 
 /**
  * Seeding is refused outside development.
@@ -145,4 +148,104 @@ export async function seedGrades() {
   revalidatePath("/", "layout");
   revalidatePath("/admin", "layout");
   return { ok: true as const, scoreCount: rows.length };
+}
+
+function passedEmails(csv: string) {
+  return csv
+    .trim()
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => line.trim().replace(/^"|"$/g, "").toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Imports Round 1 interviews for the sixty seeded applicants who "passed"
+ * written. Resolves interviewee codes from the active set's aliases, then
+ * sends a synthetic form CSV through the same importer as a real upload.
+ */
+export async function seedRound1Interviews() {
+  await requireAdmin();
+  if (!seedingAllowed()) {
+    return { ok: false as const, message: "Seeding is disabled outside development." };
+  }
+
+  const set = await requireActiveApplicantSet();
+  if (set.name !== "seeded_version") {
+    return {
+      ok: false as const,
+      message: "Round 1 interviews can only be seeded while seeded_version is active.",
+    };
+  }
+
+  let passedCsv: string;
+  try {
+    passedCsv = await readFile(path.join(process.cwd(), SEED_ROUND1_PASSED), "utf8");
+  } catch {
+    return {
+      ok: false as const,
+      message: `Could not read ${SEED_ROUND1_PASSED}. Generate it with \`node scripts/generate-seed.mjs\`.`,
+    };
+  }
+
+  const emails = passedEmails(passedCsv);
+  if (emails.length !== ROUND1_PASSED) {
+    return {
+      ok: false as const,
+      message: `${SEED_ROUND1_PASSED} should list ${ROUND1_PASSED} emails; found ${emails.length}.`,
+    };
+  }
+
+  const { data: applicants, error } = await supabase
+    .from("applicants")
+    .select("applicant_id, alias")
+    .eq("set_id", set.id);
+  if (error) return { ok: false as const, message: error.message };
+
+  const aliasesByEmail = new Map(
+    (applicants ?? []).map((applicant) => [
+      applicant.applicant_id,
+      applicant.alias as string | null,
+    ]),
+  );
+  const matched: { id: string; alias: string }[] = [];
+  const missing: string[] = [];
+  for (const email of emails) {
+    const alias = aliasesByEmail.get(email);
+    if (!alias) missing.push(email);
+    else matched.push({ id: email, alias });
+  }
+  if (!matched.length) {
+    return {
+      ok: false as const,
+      message: "None of the passed emails are in the active set. Seed test data first.",
+    };
+  }
+
+  const imported = await importRound1Interviews(
+    buildRound1SeedCsv(matched.map((applicant) => applicant.alias)),
+  );
+  if (!imported.ok) return imported;
+
+  const decidedAt = new Date().toISOString();
+  const { error: decisionError } = await supabase.from("decisions").upsert(
+    matched.map((applicant) => ({
+      set_id: set.id,
+      applicant_id: applicant.id,
+      decision: "admit" as const,
+      decided_at: decidedAt,
+    })),
+    { onConflict: "set_id,applicant_id" },
+  );
+  if (decisionError) {
+    return { ok: false as const, message: decisionError.message };
+  }
+
+  revalidatePath("/admin", "layout");
+  return {
+    ok: true as const,
+    imported: imported.imported ?? 0,
+    passed: matched.length,
+    skipped: [...(imported.skipped ?? []), ...missing.map((email) => `${email}: not in active set.`)],
+  };
 }
