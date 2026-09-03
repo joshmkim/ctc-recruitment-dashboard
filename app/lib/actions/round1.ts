@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/admin-auth";
 import { assertActiveSetUnchanged, requireActiveApplicantSet } from "@/lib/applicant-sets";
 import type { Decision } from "@/lib/actions/admin";
+import { interviewInsertsFromCsv } from "@/lib/import/interview-rows";
 import { parseRound1Csv } from "@/lib/round1/csv";
 import { selectAllRows, supabase } from "@/lib/supabase";
 
@@ -22,13 +23,7 @@ export async function importRound1Interviews(csv: string): Promise<InterviewImpo
   const { data: applicants, error } = await supabase.from("applicants").select("applicant_id, alias").eq("set_id", set.id);
   if (error) return { ok: false, message: error.message };
   const aliases = new Map((applicants ?? []).map((applicant) => [String(applicant.alias).toUpperCase(), applicant.applicant_id]));
-  const skipped: string[] = []; const inserts: Record<string, unknown>[] = [];
-  for (const row of rows) {
-    const applicantId = aliases.get(row.applicantCode.toUpperCase());
-    if (!applicantId) { skipped.push(`${row.applicantCode}: no matching applicant alias.`); continue; }
-    if (row.role !== "lead" && row.role !== "notetaker") { skipped.push(`${row.applicantCode}: role must be Lead or Notetaker.`); continue; }
-    inserts.push({ set_id: set.id, applicant_id: applicantId, role: row.role, interviewer_id: row.interviewerId, submitted_at: new Date(row.submittedAt).toISOString(), behavioral_score: row.behavioralScore, challenge_score: row.challengeScore, altruism: row.altruism, grit: row.grit, team_player: row.teamPlayer, expertise: row.expertise, community_seeker: row.communitySeeker, community_builder: row.communityBuilder, final_decision: row.finalDecision, comments: row.comments, reflections: row.reflections });
-  }
+  const { inserts, skipped } = interviewInsertsFromCsv(rows, set.id, aliases);
   if (inserts.length) {
     const { error: insertError } = await supabase.from("round1_interviews").upsert(inserts, { onConflict: "set_id,applicant_id,role" });
     if (insertError) return { ok: false, message: insertError.message };
