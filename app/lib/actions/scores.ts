@@ -49,10 +49,15 @@ export async function listSubmittedScoresForApplicants(
   return data ?? [];
 }
 
+export type SavedScores = {
+  scores: CompleteScores;
+  comments: string;
+};
+
 export async function getMyScores(
   applicantId: string,
   setId: string,
-): Promise<CompleteScores | null> {
+): Promise<SavedScores | null> {
   const [activeSet, graderId] = await Promise.all([
     requireActiveApplicantSet(),
     getGraderId(),
@@ -64,7 +69,7 @@ export async function getMyScores(
 
   const { data, error } = await supabase
     .from("written_scores")
-    .select("q1_score, q2_score, q3_score, q4_score, q5_score")
+    .select("q1_score, q2_score, q3_score, q4_score, q5_score, comments")
     .eq("set_id", setId)
     .eq("applicant_id", applicantId)
     .eq("grader_id", graderId)
@@ -74,11 +79,14 @@ export async function getMyScores(
   if (!data) return null;
 
   return {
-    q1: data.q1_score as ScoreValue,
-    q2: data.q2_score as ScoreValue,
-    q3: data.q3_score as ScoreValue,
-    q4: data.q4_score as ScoreValue,
-    q5: data.q5_score as ScoreValue,
+    scores: {
+      q1: data.q1_score as ScoreValue,
+      q2: data.q2_score as ScoreValue,
+      q3: data.q3_score as ScoreValue,
+      q4: data.q4_score as ScoreValue,
+      q5: data.q5_score as ScoreValue,
+    },
+    comments: data.comments ?? "",
   };
 }
 
@@ -86,6 +94,7 @@ export async function submitScores(
   applicantId: string,
   scores: CompleteScores,
   setId: string,
+  comments = "",
 ) {
   const [activeSet, graderId] = await Promise.all([
     requireActiveApplicantSet(),
@@ -129,6 +138,7 @@ export async function submitScores(
       q3_score: scores.q3,
       q4_score: scores.q4,
       q5_score: scores.q5,
+      comments: comments.trim() || null,
       submitted_at: new Date().toISOString(),
     },
     { onConflict: "set_id,applicant_id,grader_id" },

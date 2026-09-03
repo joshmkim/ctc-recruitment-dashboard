@@ -29,6 +29,29 @@ type Draft = Record<QuestionId, ScoreValue | null>;
 
 const EMPTY_DRAFT: Draft = { q1: null, q2: null, q3: null, q4: null, q5: null };
 
+type StoredDraft = {
+  scores: Draft;
+  comments: string;
+};
+
+function parseStoredDraft(raw: string): StoredDraft {
+  const parsed = JSON.parse(raw) as unknown;
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "scores" in parsed &&
+    parsed.scores &&
+    typeof parsed.scores === "object"
+  ) {
+    const stored = parsed as { scores: Draft; comments?: unknown };
+    return {
+      scores: { ...EMPTY_DRAFT, ...stored.scores },
+      comments: typeof stored.comments === "string" ? stored.comments : "",
+    };
+  }
+  return { scores: { ...EMPTY_DRAFT, ...(parsed as Draft) }, comments: "" };
+}
+
 function draftKey(setId: string, graderId: string, applicantId: string) {
   return `ctc.draft.${setId}.${graderId}.${applicantId}`;
 }
@@ -60,6 +83,7 @@ export function ApplicantScorer({
 
   const [activeTab, setActiveTab] = useState<QuestionId>("q1");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [comments, setComments] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -98,12 +122,16 @@ export function ApplicantScorer({
       setAlreadySubmitted(Boolean(saved));
       if (stored) {
         try {
-          setDraft({ ...EMPTY_DRAFT, ...(JSON.parse(stored) as Draft) });
+          const parsed = parseStoredDraft(stored);
+          setDraft(parsed.scores);
+          setComments(parsed.comments || saved?.comments || "");
         } catch {
-          setDraft(saved ?? EMPTY_DRAFT);
+          setDraft(saved?.scores ?? EMPTY_DRAFT);
+          setComments(saved?.comments ?? "");
         }
       } else if (saved) {
-        setDraft(saved);
+        setDraft(saved.scores);
+        setComments(saved.comments);
       }
       setLoaded(true);
     });
@@ -113,21 +141,32 @@ export function ApplicantScorer({
     };
   }, [applicant.id, grader, setId]);
 
+  const persistDraft = useCallback(
+    (scores: Draft, nextComments: string) => {
+      if (!grader) return;
+      window.localStorage.setItem(
+        draftKey(setId, grader.id, applicant.id),
+        JSON.stringify({ scores, comments: nextComments }),
+      );
+    },
+    [applicant.id, grader, setId],
+  );
+
   const setScore = useCallback(
     (question: QuestionId, value: ScoreValue) => {
       setDraft((current) => {
         const updated = { ...current, [question]: value };
-        if (grader) {
-          window.localStorage.setItem(
-            draftKey(setId, grader.id, applicant.id),
-            JSON.stringify(updated),
-          );
-        }
+        persistDraft(updated, comments);
         return updated;
       });
     },
-    [applicant.id, grader, setId],
+    [comments, persistDraft],
   );
+
+  function updateComments(value: string) {
+    setComments(value);
+    persistDraft(draft, value);
+  }
 
   const scoredCount = QUESTIONS.filter((q) => draft[q.id] !== null).length;
   const complete = scoredCount === QUESTIONS.length;
@@ -146,6 +185,7 @@ export function ApplicantScorer({
           applicant.id,
           draft as Record<QuestionId, ScoreValue>,
           setId,
+          comments,
         );
         window.localStorage.removeItem(draftKey(setId, grader.id, applicant.id));
         setConfirmOpen(false);
@@ -348,6 +388,20 @@ export function ApplicantScorer({
               {overallTotal}/{overallMax}
             </span>
           </p>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-brand-dark">
+              Comments{" "}
+              <span className="font-normal text-muted-foreground">(optional)</span>
+            </span>
+            <textarea
+              value={comments}
+              onChange={(event) => updateComments(event.target.value)}
+              placeholder="Anything the deliberation group should know."
+              rows={4}
+              className="w-full resize-y rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            />
+          </label>
 
           <DialogFooter>
             <Button

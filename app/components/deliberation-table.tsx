@@ -12,8 +12,10 @@ import {
 } from "lucide-react";
 
 import { DecisionSelect } from "@/components/decision-select";
+import { ApplicantApplicationDialog } from "@/components/applicant-application-dialog";
 import { ApplicantResumeDialog } from "@/components/applicant-resume";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -34,12 +36,24 @@ import type { DeliberationApplicant } from "@/lib/actions/deliberation";
 import {
   ASSIGNMENT_SLOTS,
   GRADERS_PER_APPLICANT,
-  SIGNIFICANT_GAP,
 } from "@/lib/grading";
 import { QUESTIONS } from "@/lib/questions";
 import { cn } from "@/lib/utils";
 
 type SortKey = "overall" | "normalized" | "q1" | "q2" | "q3" | "q4" | "q5";
+type RoleFilter = "all" | "designer" | "developer";
+const ROLE_FILTERS: Array<{ value: RoleFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "designer", label: "Designer" },
+  { value: "developer", label: "Developer" },
+];
+
+function roleFilterKey(role: string | null) {
+  const value = role?.trim().toLowerCase() ?? "";
+  if (value.startsWith("design")) return "designer";
+  if (value.startsWith("develop")) return "developer";
+  return "other";
+}
 const UNDECIDED = "__undecided__";
 type DecisionSort = Decision | typeof UNDECIDED | null;
 const DECISIONS: Array<{ value: Decision; label: string }> = [
@@ -89,15 +103,24 @@ export function DeliberationTable({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showNames, setShowNames] = useState(false);
   const [decisionFirst, setDecisionFirst] = useState<DecisionSort>(null);
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+
+  const visible = useMemo(
+    () =>
+      roleFilter === "all"
+        ? applicants
+        : applicants.filter((applicant) => roleFilterKey(applicant.role) === roleFilter),
+    [applicants, roleFilter],
+  );
 
   const problems = useMemo(
-    () => applicants.filter((applicant) => !applicant.ready),
-    [applicants],
+    () => visible.filter((applicant) => !applicant.ready),
+    [visible],
   );
 
   const rows = useMemo(() => {
     const column = sortKey.startsWith("q") ? Number(sortKey[1]) - 1 : null;
-    return [...applicants].sort((left, right) => {
+    return [...visible].sort((left, right) => {
       // Anything not ready sorts to the top regardless of direction. Its averages
       // come from partial data, so ranking it against finished rows would lie.
       if (left.ready !== right.ready) return left.ready ? 1 : -1;
@@ -126,7 +149,7 @@ export function DeliberationTable({
             : right.questionAverages[column];
       return descending ? b - a : a - b;
     });
-  }, [applicants, decisionFirst, descending, sortKey]);
+  }, [visible, decisionFirst, descending, sortKey]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) setDescending((current) => !current);
@@ -147,6 +170,18 @@ export function DeliberationTable({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Tabs
+            value={roleFilter}
+            onValueChange={(value) => setRoleFilter(value as RoleFilter)}
+          >
+            <TabsList aria-label="Filter by role">
+              {ROLE_FILTERS.map((filter) => (
+                <TabsTrigger key={filter.value} value={filter.value}>
+                  {filter.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
           <Dialog>
             <DialogTrigger
               render={
@@ -201,8 +236,8 @@ export function DeliberationTable({
         <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-5 py-4">
           <p className="flex items-center gap-2 font-heading font-semibold text-destructive">
             <TriangleAlertIcon className="size-4 shrink-0" />
-            {problems.length} of {applicants.length} applicant
-            {applicants.length === 1 ? "" : "s"} {problems.length === 1 ? "is" : "are"} not
+            {problems.length} of {visible.length} applicant
+            {visible.length === 1 ? "" : "s"} {problems.length === 1 ? "is" : "are"} not
             ready to deliberate
           </p>
           <ul className="mt-2.5 flex flex-col gap-1 text-sm text-destructive">
@@ -227,6 +262,7 @@ export function DeliberationTable({
               <tr>
                 <th className="w-9 px-3 py-3" />
                 <th className="min-w-48 px-3 py-3">Applicant</th>
+                <th className="px-3 py-3">Role</th>
                 {QUESTIONS.map((question, index) => (
                   <SortHeader
                     key={question.id}
@@ -304,9 +340,18 @@ export function DeliberationTable({
                       </td>
                       <td className="px-3 py-3">
                         <ApplicantLabel applicant={applicant} showNames={showNames} />
+                        <div className="mt-2">
+                          <ApplicantApplicationDialog
+                            applicantId={applicant.id}
+                            label={labelFor(applicant, showNames)}
+                          />
+                        </div>
                         {!applicant.ready ? (
                           <p className="text-xs text-destructive">{describeProblem(applicant)}</p>
                         ) : null}
+                      </td>
+                      <td className="px-3 py-3 text-sm">
+                        {applicant.role ?? "—"}
                       </td>
                       {applicant.questionAverages.map((value, index) => (
                         <td key={index} className="px-3 py-3 text-center tabular-nums">
@@ -329,16 +374,9 @@ export function DeliberationTable({
                       </td>
                       <td className="px-3 py-3 text-center">
                         {applicant.normalizedTotal !== null ? (
-                          <div className="flex flex-col items-center gap-1">
-                            <span className="rounded-full bg-brand-soft px-2 py-1 text-xs font-medium tabular-nums text-brand-dark">
-                              {formatNormalized(applicant.normalizedTotal)}
-                            </span>
-                            {applicant.maxGap >= SIGNIFICANT_GAP ? (
-                              <span className="text-xs font-medium tabular-nums text-destructive">
-                                Gap {applicant.maxGap}
-                              </span>
-                            ) : null}
-                          </div>
+                          <span className="rounded-full bg-brand-soft px-2 py-1 text-xs font-medium tabular-nums text-brand-dark">
+                            {formatNormalized(applicant.normalizedTotal)}
+                          </span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -353,8 +391,12 @@ export function DeliberationTable({
                     </tr>
                     {isExpanded ? (
                       <tr className="border-t border-border bg-muted/25">
-                        <td colSpan={11} className="px-5 py-4">
-                          <div className="mb-3">
+                        <td colSpan={12} className="px-5 py-4">
+                          <div className="mb-3 flex flex-wrap gap-2">
+                            <ApplicantApplicationDialog
+                              applicantId={applicant.id}
+                              label={labelFor(applicant, showNames)}
+                            />
                             <ApplicantResumeDialog resumeUrl={applicant.resumeUrl} />
                           </div>
                           <div className="max-w-3xl overflow-hidden rounded-xl border border-border bg-card">
@@ -401,29 +443,29 @@ export function DeliberationTable({
                                 </div>
                               );
                             })}
-
-                            {applicant.questionGaps.length ? (
-                              <div className={cn(GRID, "bg-muted/40 px-3 py-2 text-sm")}>
-                                <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                                  Gap
-                                </span>
-                                {applicant.questionGaps.map((gap, index) => (
-                                  <span
-                                    key={index}
-                                    className={cn(
-                                      "text-center tabular-nums",
-                                      gap >= SIGNIFICANT_GAP
-                                        ? "font-semibold text-destructive"
-                                        : "text-muted-foreground",
-                                    )}
-                                  >
-                                    {gap}
-                                  </span>
-                                ))}
-                                <span />
-                              </div>
-                            ) : null}
                           </div>
+                          {applicant.graders.some((grader) => grader.comments) ? (
+                            <div className="mt-3 max-w-3xl overflow-hidden rounded-xl border border-border bg-card">
+                              <p className="border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                                Comments
+                              </p>
+                              {applicant.graders
+                                .filter((grader) => grader.comments)
+                                .map((grader) => (
+                                  <div
+                                    key={grader.graderId}
+                                    className="border-b border-border px-3 py-3 last:border-b-0"
+                                  >
+                                    <p className="text-sm font-medium text-brand-dark">
+                                      {grader.graderName}
+                                    </p>
+                                    <p className="mt-1 whitespace-pre-wrap text-sm text-secondary-foreground">
+                                      {grader.comments}
+                                    </p>
+                                  </div>
+                                ))}
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ) : null}
@@ -435,9 +477,15 @@ export function DeliberationTable({
         </div>
       ) : (
         <div className="rounded-2xl border border-dashed border-border bg-card p-12 text-center">
-          <p className="font-medium text-brand-dark">No applicants yet.</p>
+          <p className="font-medium text-brand-dark">
+            {applicants.length && roleFilter !== "all"
+              ? `No ${roleFilter}s in this set.`
+              : "No applicants yet."}
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Applicants appear here as soon as the application source has rows.
+            {applicants.length && roleFilter !== "all"
+              ? "Switch back to All to see every applicant."
+              : "Applicants appear here as soon as the application source has rows."}
           </p>
         </div>
       )}
