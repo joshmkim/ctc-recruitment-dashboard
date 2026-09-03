@@ -13,7 +13,7 @@ export default async function EnterPage() {
   ]);
 
   if (admin) redirect("/admin/graders");
-  if (graderId) redirect("/");
+  if (graderId) redirect("/written");
 
   return <EntryGate graders={graders} />;
 }

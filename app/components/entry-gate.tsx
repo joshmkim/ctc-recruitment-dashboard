@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { ArrowRightIcon, LockKeyholeIcon, PlusIcon, UserRoundIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import { BackToHome } from "@/components/back-to-home";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -31,7 +32,7 @@ export function EntryGate({ graders }: { graders: Grader[] }) {
     startTransition(async () => {
       try {
         await chooseGrader(graderId);
-        router.replace("/");
+        router.replace("/written");
         router.refresh();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not continue.");
@@ -46,7 +47,7 @@ export function EntryGate({ graders }: { graders: Grader[] }) {
       try {
         const grader = await addGrader(name);
         await chooseGrader(grader.id);
-        router.replace("/");
+        router.replace("/written");
         router.refresh();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not add grader.");
@@ -68,7 +69,8 @@ export function EntryGate({ graders }: { graders: Grader[] }) {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-6 py-12">
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center gap-4 px-6 py-12">
+      <BackToHome />
       <div className="grid w-full overflow-hidden rounded-3xl border border-border bg-card shadow-xl shadow-brand-dark/5 lg:grid-cols-2">
         <section className="bg-brand-dark p-8 text-white sm:p-12">
           <p className="mb-8 text-sm font-semibold tracking-[0.18em] text-brand uppercase">

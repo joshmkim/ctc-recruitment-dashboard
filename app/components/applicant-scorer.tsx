@@ -190,7 +190,7 @@ export function ApplicantScorer({
         window.localStorage.removeItem(draftKey(setId, grader.id, applicant.id));
         setConfirmOpen(false);
         toast.success("Scores saved");
-        router.push(next ? `/score/${encodeURIComponent(next.alias)}` : "/");
+        router.push(next ? `/score/${encodeURIComponent(next.alias)}` : "/written");
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "Could not save your scores.",

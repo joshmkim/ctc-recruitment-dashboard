@@ -8,8 +8,6 @@ const links = [
   { href: "/admin/applicants", label: "Applicants", icon: FileUpIcon },
   { href: "/admin/graders", label: "Graders", icon: UsersRoundIcon },
   { href: "/admin/deliberation", label: "Deliberation", icon: ScaleIcon },
-  { href: "/admin/interviews/round-1", label: "Round 1", icon: ScaleIcon },
-  { href: "/admin/interviews/round-2", label: "Round 2", icon: ScaleIcon },
 ];
 
 export function AdminNav() {

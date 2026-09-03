@@ -4,9 +4,15 @@ import { NextResponse } from "next/server";
 const GRADER_COOKIE = "ctc-grader-id";
 const ADMIN_COOKIE = "ctc-admin";
 
+function isPublic(pathname: string) {
+  if (pathname === "/" || pathname === "/enter") return true;
+  if (pathname.startsWith("/interviews")) return true;
+  return false;
+}
+
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  if (pathname === "/enter") return NextResponse.next();
+  if (isPublic(pathname)) return NextResponse.next();
 
   const hasIdentity =
     request.cookies.has(GRADER_COOKIE) || request.cookies.has(ADMIN_COOKIE);
