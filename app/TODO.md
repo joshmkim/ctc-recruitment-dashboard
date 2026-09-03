@@ -17,13 +17,6 @@ should stay off the scoring screen: demographics next to an essay somebody is
 about to score introduce bias into an individual admissions decision for no
 upside. Aggregate them for admins if they are wanted at all.
 
-### The rest of the dashboard
-
-`CLAUDE.md` describes two surfaces and two deliberation types. The written scorer and the written deliberation view exist; the interview side does not:
-
-- **Interviewer form** — interviewers submit notes and scores for a candidate.
-- **Interview deliberations** — the same aggregate-and-decide view over interview scores, and some way to weigh written against interview when the two disagree.
-
 ## Open decisions
 
 ### `getApplicants()` reads whole applications for every caller

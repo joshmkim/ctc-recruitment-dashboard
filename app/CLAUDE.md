@@ -17,6 +17,11 @@ The app has two main surfaces:
 1. **Interviewer Form** — Interviewers submit notes and scores for a specific candidate. On submit, that candidate's information is persisted to the database.
 2. **Deliberation Dashboard** — A shared view where the whole club can see all candidates and the full set of data associated with each one, to deliberate on accept/deny decisions.
 
+Written applications, round 1 interviews, and round 2 interviews are deliberately
+separate products: each interview round has independent database tables, CSV
+imports, and decisions. The interview detail view may read written-application
+data only to show the applicant profile and written score history.
+
 ## Applicant data
 
 Written applications come from the Google Form's response sheet, exported as CSV

@@ -85,7 +85,7 @@ const COLUMNS = {
   q1: "what is important to you",
   q2: "community is a core pillar",
   q3: "write a short thank-you note",
-  q4: "please describe any relevant technical or project experiences",
+  q4: "please briefly describe any relevant technical or group work experiences",
   q5: "at ctc, one of our favorite traditions",
   commitments: "please list out any relevant classes",
 } as const;
