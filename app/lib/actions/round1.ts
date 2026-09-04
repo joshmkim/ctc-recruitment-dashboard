@@ -10,7 +10,9 @@ import { selectAllRows, supabase } from "@/lib/supabase";
 
 export type Interview = { role: "lead" | "notetaker"; interviewerId: string; submittedAt: string; values: number[]; total: number; finalDecision: Decision; comments: Record<string, string>; reflections: Record<string, string> };
 export type Round1Applicant = { id: string; name: string; fullName: string; graduationYear: string | null; interviews: Interview[]; total: number | null; decision: Decision | null };
-export type InterviewImportResult = { ok: boolean; imported?: number; skipped?: string[]; message?: string };
+export type InterviewImportResult =
+  | { ok: true; imported: number; skipped?: string[] }
+  | { ok: false; message: string };
 const scoreColumns = "behavioral_score, challenge_score, altruism, grit, team_player, expertise, community_seeker, community_builder";
 const values = (row: Record<string, unknown>) => ["behavioral_score", "challenge_score", "altruism", "grit", "team_player", "expertise", "community_seeker", "community_builder"].map((key) => Number(row[key]));
 const asInterview = (row: Record<string, unknown>): Interview => ({ role: row.role as Interview["role"], interviewerId: String(row.interviewer_id), submittedAt: String(row.submitted_at), values: values(row), total: values(row).reduce((a, b) => a + b, 0), finalDecision: row.final_decision as Decision, comments: (row.comments ?? {}) as Record<string, string>, reflections: (row.reflections ?? {}) as Record<string, string> });
