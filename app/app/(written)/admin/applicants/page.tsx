@@ -1,3 +1,4 @@
+import { ApplicantExports } from "@/components/applicant-exports";
 import { ApplicantImport } from "@/components/applicant-import";
 import { ApplicantSetList } from "@/components/applicant-set-list";
 import { SeedPanel } from "@/components/seed-panel";
@@ -21,6 +22,7 @@ export default async function ApplicantsPage() {
     <div className="flex flex-col gap-5">
       <ApplicantImport current={applicants.length} />
       <ApplicantSetList sets={sets} />
+      <ApplicantExports />
       {/* Seeding is development-only, and the action refuses independently of
           this check so a production deploy cannot be talked into it. */}
       {process.env.NODE_ENV === "production" ? null : (
