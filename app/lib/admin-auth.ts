@@ -6,7 +6,7 @@ import {
 } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { GRADER_COOKIE } from "@/lib/identity";
+import { getGraderId, GRADER_COOKIE } from "@/lib/identity";
 
 const ADMIN_COOKIE = "ctc-admin";
 const TOKEN_MESSAGE = "ctc-admin";
@@ -35,6 +35,24 @@ export async function isAdmin() {
 
 export async function requireAdmin() {
   if (!(await isAdmin())) redirect("/enter");
+}
+
+/**
+ * For reads open to the whole club rather than to admins alone.
+ *
+ * The grader cookie is unsigned and forgeable, so this is not access control —
+ * it is the same bar the rest of the written app sets, applied where the read
+ * happens rather than only at the edge in `proxy.ts`. Admins pass separately
+ * because `signInAdmin()` deletes the grader cookie.
+ *
+ * It lives here, beside `requireAdmin()`, rather than in `lib/identity.ts`:
+ * that module is imported by this one, and putting it there would make the two
+ * circular.
+ */
+export async function requireIdentity() {
+  if (await getGraderId()) return;
+  if (await isAdmin()) return;
+  redirect("/enter");
 }
 
 export async function signInAdmin(candidate: string) {

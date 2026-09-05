@@ -1,6 +1,6 @@
 "use server";
 
-import { requireAdmin } from "@/lib/admin-auth";
+import { requireAdmin, requireIdentity } from "@/lib/admin-auth";
 import { requireActiveApplicantSet } from "@/lib/applicant-sets";
 import { getApplicant, getApplicants } from "@/lib/applications";
 import type { Decision } from "@/lib/actions/admin";
@@ -59,8 +59,9 @@ export type DeliberationApplicant = {
   id: string;
   /** Three-letter alias. The default label in this view. */
   name: string;
-  /** Real name from the form. Shown only when the admin unmasks names. */
-  fullName: string;
+  /** Real name from the form. Shown only when the admin unmasks names, and
+   *  null on the shared board, which never gets to see one. */
+  fullName: string | null;
   graduationYear: string | null;
   resumeUrl: string | null;
   role: string | null;
@@ -301,8 +302,16 @@ export async function getWrittenScoreSummary(
   return scoresForApplicant(applicantId, ctx);
 }
 
-export async function getDeliberationApplicants(): Promise<DeliberationApplicant[]> {
-  await requireAdmin();
+/**
+ * Every applicant with their scores, normalization and decision.
+ *
+ * `includeNames` is false for the shared board, which shows aliases only. The
+ * real name and the resume link are dropped here rather than hidden in the
+ * browser, so a page that will not render them never receives them.
+ */
+async function loadDeliberationApplicants(
+  { includeNames }: { includeNames: boolean },
+): Promise<DeliberationApplicant[]> {
   const set = await requireActiveApplicantSet();
 
   const [applicants, ctx, decisionsResult] = await Promise.all([
@@ -324,9 +333,9 @@ export async function getDeliberationApplicants(): Promise<DeliberationApplicant
     return {
       id: applicant.id,
       name: applicant.name,
-      fullName: applicant.fullName ?? applicant.name,
+      fullName: includeNames ? applicant.fullName ?? applicant.name : null,
       graduationYear: applicant.profile.graduationYear,
-      resumeUrl: applicant.profile.resumeUrl,
+      resumeUrl: includeNames ? applicant.profile.resumeUrl : null,
       role: applicant.profile.role,
       ...scores,
       decision: decisions.get(applicant.id) ?? null,
@@ -334,15 +343,58 @@ export async function getDeliberationApplicants(): Promise<DeliberationApplicant
   });
 }
 
+export async function getDeliberationApplicants(): Promise<DeliberationApplicant[]> {
+  await requireAdmin();
+  return loadDeliberationApplicants({ includeNames: true });
+}
+
+/** The same board for the whole club, at `/deliberation`, without names. */
+export async function getSharedDeliberationApplicants(): Promise<DeliberationApplicant[]> {
+  await requireIdentity();
+  return loadDeliberationApplicants({ includeNames: false });
+}
+
+/**
+ * Just the decisions, for the shared board to poll while an admin sets them.
+ *
+ * A few hundred short strings, against the megabytes of essays and grader rows
+ * a full reload of the board costs — which is why only this part refreshes on
+ * its own.
+ *
+ * Reads the set the caller was rendered for rather than whatever is active now,
+ * so the decision column stays consistent with the scores beside it if a set is
+ * archived while the board is open.
+ */
+export async function getDecisions(setId: string): Promise<Record<string, Decision>> {
+  await requireIdentity();
+
+  const { data, error } = await supabase
+    .from("decisions")
+    .select("applicant_id, decision")
+    .eq("set_id", setId);
+  if (error) throw new Error(`Could not load decisions: ${error.message}`);
+
+  return Object.fromEntries(
+    (data ?? []).map((item) => [item.applicant_id, item.decision as Decision]),
+  );
+}
+
 export type WrittenApplication = {
   responses: Record<(typeof QUESTION_IDS)[number], string>;
   commitments: string | null;
 };
 
+/**
+ * Deliberately readable by any grader, not just an assigned one: the shared
+ * board exists so the club can read an application together while deciding on
+ * it. `/score/[applicantId]` still narrows to the applicants a grader was
+ * given — that page is for scoring, where reading the rest of the pool has no
+ * purpose.
+ */
 export async function getWrittenApplication(
   applicantId: string,
 ): Promise<WrittenApplication> {
-  await requireAdmin();
+  await requireIdentity();
   const applicant = await getApplicant(applicantId);
   if (!applicant) throw new Error("Applicant was not found.");
   return {

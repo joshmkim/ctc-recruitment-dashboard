@@ -5,6 +5,10 @@ import { useTransition } from "react";
 import { toast } from "sonner";
 
 import {
+  DECISION_COLORS as decisionColors,
+  DECISION_LABELS as OPTIONS,
+} from "@/components/decision-badge";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -13,19 +17,7 @@ import {
 } from "@/components/ui/select";
 import { clearDecision, setDecision, type Decision } from "@/lib/actions/admin";
 
-const OPTIONS: Array<{ value: Decision; label: string }> = [
-  { value: "admit", label: "Admit" },
-  { value: "lean_admit", label: "Lean admit" },
-  { value: "lean_deny", label: "Lean deny" },
-  { value: "deny", label: "Deny" },
-];
 const CLEAR_VALUE = "__clear__";
-const decisionColors: Record<Decision, string> = {
-  admit: "border-brand/35 bg-brand-soft text-brand-dark",
-  lean_admit: "border-brand/25 bg-brand-soft/60 text-brand-dark",
-  lean_deny: "border-amber-300/60 bg-amber-50 text-amber-900",
-  deny: "border-destructive/30 bg-destructive/10 text-destructive",
-};
 
 export function DecisionSelect({
   activeSetId,

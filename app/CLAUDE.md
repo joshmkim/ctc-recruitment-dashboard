@@ -100,6 +100,19 @@ There are two privilege levels:
 
 > Note: The exact permissions for each level have not been defined yet. Ask before assuming what regular vs. admin users can do, and do not hardcode privilege behavior until it is specified.
 
+Written deliberation is drawn across two routes, and the split is the point:
+
+- `/admin/deliberation` is where decisions are **written**, and the only place
+  names can be unmasked or a resume opened. It stays behind `requireAdmin()`.
+- `/deliberation` is the same table for the whole club, read-only. Anyone with a
+  grader identity can open it. Its loader passes `includeNames: false`, so
+  `fullName` and `resumeUrl` are null before the page is rendered — the aliases
+  are not a client-side mask over data that was sent anyway. The decision column
+  polls `getDecisions()` every 5s so an admin's decision appears on everyone's
+  screen mid-meeting; nothing else on the page refreshes on its own.
+
+One board, one writer. Do not add decision editing to the shared route.
+
 ## Tech Stack
 
 - **Framework:** Next.js 16 (App Router)

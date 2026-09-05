@@ -25,6 +25,13 @@ export async function SiteHeader() {
               Written Applications
             </span>
           </Link>
+          <span className="text-border">|</span>
+          <Link
+            href="/deliberation"
+            className="text-sm font-medium text-muted-foreground hover:text-brand-dark"
+          >
+            Deliberation
+          </Link>
           {admin ? (
             <>
               <span className="text-border">|</span>

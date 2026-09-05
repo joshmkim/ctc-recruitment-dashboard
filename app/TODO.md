@@ -39,6 +39,15 @@ internal tool where every user is trusted and the surface is a handful of club
 members, but it should not survive contact with real admissions decisions. Real
 per-user login is the fix; signing the grader cookie is the cheap interim step.
 
+### Any grader can read any application
+
+`getWrittenApplication()` used to require admin; the shared deliberation board
+needs it, so it now takes any identity. A grader can therefore read the essays of
+an applicant they were never assigned, by opening `/deliberation` — which is the
+point of a board the club reads together, but it is wider than `/score/[id]`,
+which still answers `notFound()` outside a grader's own queue. Revisit if written
+applications ever need to stay compartmentalised until deliberation day.
+
 ### Regular vs admin permissions
 
 The split is now drawn but not written down anywhere except the code. Admins manage graders, assignments, and decisions; graders read their own queue and submit their own scores, and cannot assign work to themselves or anyone else. Worth recording in `CLAUDE.md` so the boundary is a stated rule rather than an accident of which actions happen to call `requireAdmin()`.

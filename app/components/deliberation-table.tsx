@@ -11,6 +11,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 
+import { DecisionBadge, DECISION_LABELS } from "@/components/decision-badge";
 import { DecisionSelect } from "@/components/decision-select";
 import { ApplicantApplicationDialog } from "@/components/applicant-application-dialog";
 import { ApplicantResumeDialog } from "@/components/applicant-resume";
@@ -55,12 +56,7 @@ function roleFilterKey(role: string | null) {
 }
 const UNDECIDED = "__undecided__";
 type DecisionSort = Decision | typeof UNDECIDED | null;
-const DECISIONS: Array<{ value: Decision; label: string }> = [
-  { value: "admit", label: "Admit" },
-  { value: "lean_admit", label: "Lean admit" },
-  { value: "lean_deny", label: "Lean deny" },
-  { value: "deny", label: "Deny" },
-];
+const DECISIONS = DECISION_LABELS;
 
 const format = (value: number) =>
   value ? Number(value.toFixed(2)).toString() : "—";
@@ -100,12 +96,17 @@ export function DeliberationTable({
   activeSetId,
   gradersPerApplicant,
   applicants,
+  readOnly = false,
 }: {
   activeSetId: string;
   /** From the active set. Sets created before the move to three graders keep
    *  their two, so this is not a constant. */
   gradersPerApplicant: number;
   applicants: DeliberationApplicant[];
+  /** The shared board at `/deliberation`: same table, but decisions are shown
+   *  rather than set, and neither real names nor resumes are on it — the server
+   *  does not send either, so there is nothing to unmask. */
+  readOnly?: boolean;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [descending, setDescending] = useState(true);
@@ -240,16 +241,18 @@ export function DeliberationTable({
               </div>
             </DialogContent>
           </Dialog>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-pressed={showNames}
-            onClick={() => setShowNames((current) => !current)}
-          >
-            {showNames ? <EyeOffIcon /> : <EyeIcon />}
-            {showNames ? "Hide names" : "Show names"}
-          </Button>
+          {readOnly ? null : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-pressed={showNames}
+              onClick={() => setShowNames((current) => !current)}
+            >
+              {showNames ? <EyeOffIcon /> : <EyeIcon />}
+              {showNames ? "Hide names" : "Show names"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -408,11 +411,15 @@ export function DeliberationTable({
                         )}
                       </td>
                       <td className="px-3 py-3">
-                        <DecisionSelect
-                          activeSetId={activeSetId}
-                          applicantId={applicant.id}
-                          decision={applicant.decision}
-                        />
+                        {readOnly ? (
+                          <DecisionBadge decision={applicant.decision} />
+                        ) : (
+                          <DecisionSelect
+                            activeSetId={activeSetId}
+                            applicantId={applicant.id}
+                            decision={applicant.decision}
+                          />
+                        )}
                       </td>
                     </tr>
                     {isExpanded ? (
@@ -423,7 +430,9 @@ export function DeliberationTable({
                               applicantId={applicant.id}
                               label={labelFor(applicant, showNames)}
                             />
-                            <ApplicantResumeDialog resumeUrl={applicant.resumeUrl} />
+                            {readOnly ? null : (
+                              <ApplicantResumeDialog resumeUrl={applicant.resumeUrl} />
+                            )}
                           </div>
                           <div className="max-w-3xl overflow-hidden rounded-xl border border-border bg-card">
                             <div className={cn(GRID, "border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground")}>
@@ -520,7 +529,7 @@ export function DeliberationTable({
 }
 
 function labelFor(applicant: DeliberationApplicant, showNames: boolean) {
-  return showNames ? applicant.fullName : applicant.name;
+  return (showNames ? applicant.fullName : null) ?? applicant.name;
 }
 
 function normalizationLabel(grader: DeliberationApplicant["graders"][number]) {
@@ -543,7 +552,7 @@ function ApplicantLabel({
   applicant: DeliberationApplicant;
   showNames: boolean;
 }) {
-  if (!showNames) {
+  if (!showNames || !applicant.fullName) {
     return (
       <p className="flex items-baseline gap-2">
         <span className="font-mono text-sm font-medium tracking-wide text-brand-dark">
