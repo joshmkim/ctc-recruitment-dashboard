@@ -50,8 +50,13 @@ export type ParseReport = {
   /** Rows with no email at all. Overwhelmingly the blank trailing rows a sheet
    *  accumulates, so they are counted rather than treated as failures. */
   blankRows: number;
-  /** Resubmissions collapsed to the most recent, by email. */
-  duplicates: Array<{ email: string; kept: string; discarded: number }>;
+  /** Resubmissions collapsed to the most recent, within one email and role. */
+  duplicates: Array<{
+    email: string;
+    role: string | null;
+    kept: string;
+    discarded: number;
+  }>;
   /** Things a human should look at, which did not stop the import. */
   warnings: string[];
 };
@@ -82,7 +87,7 @@ const COLUMNS = {
   q1: "what is important to you",
   q2: "community is a core pillar",
   q3: "write a short thank-you note",
-  q4: "please briefly describe any relevant technical or group work experiences",
+  q4: "please describe any relevant technical or project experiences",
   q5: "at ctc, one of our favorite traditions",
   commitments: "please list out any relevant classes",
 } as const;
@@ -184,6 +189,35 @@ function safeUrls(value: string | null) {
   return safe.length ? safe.join(", ") : null;
 }
 
+/**
+ * The identity of one application: who submitted it, and which role they applied
+ * for.
+ *
+ * Not the email on its own. Designer and developer are filtered, deliberated,
+ * and decided separately, so one person applying to both has made two
+ * applications that happen to share an inbox — with different answers, deserving
+ * their own graders and two independent decisions. Keying on the email alone
+ * collapsed them, kept whichever arrived later, and so both deleted an
+ * application nobody knew was missing and moved that person between pools.
+ *
+ * Keying on the pair still collapses what the collapse was written for: the same
+ * person submitting the same role twice, which the form allows and which is a
+ * correction rather than a second application.
+ *
+ * An unquoted email address cannot contain "#", so the suffix can never be read
+ * as part of one, and the address is recoverable by cutting at it. A row with no
+ * role keeps the bare email — the same id an applicant set imported before this
+ * change already holds.
+ */
+function applicationKey(email: string, role: string | null) {
+  if (!role) return email;
+  const slug = role
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug ? `${email}#${slug}` : email;
+}
+
 export function parseApplicantCsv(csv: string): ParseReport {
   // Papa handles quoted commas, escaped quotes, and newlines inside fields.
   // Headers are read manually rather than with `header: true` so a duplicated
@@ -206,7 +240,7 @@ export function parseApplicantCsv(csv: string): ParseReport {
     );
   }
 
-  const byEmail = new Map<string, { row: ApplicantRow; discarded: number }>();
+  const byApplication = new Map<string, { row: ApplicantRow; discarded: number }>();
   const duplicates: ParseReport["duplicates"] = [];
   let blankRows = 0;
 
@@ -238,8 +272,8 @@ export function parseApplicantCsv(csv: string): ParseReport {
     const rowLabel = `row ${index + 2}`;
     const at = (key: ColumnKey) => cells[columns[key]];
 
-    // Lowercased because the email is the key every score, assignment, and
-    // decision hangs off. "Josh@usc.edu" and "josh@usc.edu" arriving as two
+    // Lowercased because the email is half of the key every score, assignment,
+    // and decision hangs off. "Josh@usc.edu" and "josh@usc.edu" arriving as two
     // applicants would split one person's scores across two identities.
     const email = at("email")?.trim().toLowerCase();
     if (!email) {
@@ -294,12 +328,23 @@ export function parseApplicantCsv(csv: string): ParseReport {
       );
     }
 
+    const role = optional(at("role"));
+    // The role is half the identity now, so a blank one is no longer just a gap
+    // in the profile. Two role-less submissions from one address collapse into
+    // each other, and neither pool's filter will show whichever survives.
+    if (!role) {
+      warnings.push(
+        `${email} (${rowLabel}) has no role, so it cannot be sorted into the designer or ` +
+          "developer pool. Set one in the sheet and import again.",
+      );
+    }
+
     const row: ApplicantRow = {
-      applicant_id: email,
+      applicant_id: applicationKey(email, role),
       name: name || email,
       submitted_at: submittedAt,
       responses,
-      role: optional(at("role")),
+      role,
       student_id: optional(at("studentId")),
       majors: optional(at("majors")),
       minors: optional(at("minors")),
@@ -312,24 +357,27 @@ export function parseApplicantCsv(csv: string): ParseReport {
       commitments: optional(at("commitments")),
     };
 
-    // Resubmissions are common and the form allows them, so the latest wins.
-    const existing = byEmail.get(email);
+    // Resubmitting the same role is common and the form allows it, so the latest
+    // wins. A submission for the other role is a second application, not a
+    // correction, and keys differently — so it lands here as its own entry.
+    const existing = byApplication.get(row.applicant_id);
     if (!existing) {
-      byEmail.set(email, { row, discarded: 0 });
+      byApplication.set(row.applicant_id, { row, discarded: 0 });
       return;
     }
 
     const keepNew = row.submitted_at > existing.row.submitted_at;
-    byEmail.set(email, {
+    byApplication.set(row.applicant_id, {
       row: keepNew ? row : existing.row,
       discarded: existing.discarded + 1,
     });
   });
 
-  for (const [email, entry] of byEmail) {
+  for (const entry of byApplication.values()) {
     if (entry.discarded > 0) {
       duplicates.push({
-        email,
+        email: entry.row.applicant_id.split("#")[0],
+        role: entry.row.role,
         kept: entry.row.submitted_at,
         discarded: entry.discarded,
       });
@@ -337,7 +385,7 @@ export function parseApplicantCsv(csv: string): ParseReport {
   }
 
   return {
-    rows: [...byEmail.values()].map((entry) => entry.row),
+    rows: [...byApplication.values()].map((entry) => entry.row),
     blankRows,
     duplicates,
     warnings,

@@ -15,7 +15,12 @@ export type ImportSummary = {
   setId: string;
   applicantCount: number;
   blankRows: number;
-  duplicates: Array<{ email: string; kept: string; discarded: number }>;
+  duplicates: Array<{
+    email: string;
+    role: string | null;
+    kept: string;
+    discarded: number;
+  }>;
   warnings: string[];
 };
 

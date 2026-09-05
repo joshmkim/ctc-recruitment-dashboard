@@ -107,7 +107,7 @@ export const QUESTIONS: Question[] = [
     id: "q4",
     label: "Technical",
     prompt:
-      "Please briefly describe any relevant technical or group work experiences—it does not need to be extensive! For example, personal projects, internships, classes, or any technologies or projects that you’re excited about and would like to learn more about, etc.",
+      "Please describe any relevant technical or project experiences (personal projects, internships, research, etc). Feel free to also share any technologies, skills, or experiences you are excited about and are eager to learn more about.",
     rubric: {
       1: ["Little technical experience", "No group work", "Little interest"],
       2: [
@@ -131,7 +131,7 @@ export const QUESTIONS: Question[] = [
     id: "q5",
     label: "Lightning Talk",
     prompt:
-      "At CTC, one of our favorite traditions is Lightning Talks, where a member gives a short presentation on an interest, passion, or hobby of theirs—some topics from last year were how to DJ, a self defense workshop, and all about Niki Zefanya. What would you give a lightning talk on and why?",
+      "At CTC, one of our favorite traditions is Lightning Talks, where a member gives a short presentation on an interest, passion, or hobby. Topics from last year included: how to DJ, an interactive self-defense workshop, all about Niki Zefanya, and more! What would you give a lightning talk on and why?",
     rubric: {
       1: ["Not compelling", "Not genuine", "Low enthusiasm", "Seems like AI"],
       2: ["Somewhat interesting", "Some enthusiasm", "Somewhat genuine"],

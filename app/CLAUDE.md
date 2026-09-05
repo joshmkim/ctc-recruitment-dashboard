@@ -36,9 +36,17 @@ record; the `applicants` table is a snapshot of it.
   The CSV still holds real names and `applicants.name` keeps them; graders only
   ever see the alias. Re-importing does not change an alias already handed out.
   Admin deliberation can reveal names with a toggle. See `0007_applicant_alias.sql`.
-- `applicant_id` is that email everywhere — `applicants`, `assignments`,
-  `written_scores`, and `decisions`. It is the only durable key a Google Form
-  offers. The three child tables reference `applicants` (`0005`) with
+- `applicant_id` is that email plus the role applied for — `daledai@usc.edu#designer` —
+  and is that same string everywhere: `applicants`, `assignments`,
+  `written_scores`, and `decisions`. The email is the only durable key a Google
+  Form offers, but it is not enough on its own. Designer and developer are
+  filtered, deliberated, and decided separately, so somebody who applies to both
+  has made two applications sharing an inbox; keying on the email alone kept only
+  whichever they submitted later. Same email *and* same role is a resubmission and
+  still collapses to the latest. A row with no role at all keeps the bare email
+  and is warned about. Nothing displays this string — graders see the alias and
+  URLs carry the alias — so cut at the `#` if you need the address. The three
+  child tables reference `applicants` (`0005`) with
   `on update cascade` so correcting a typo'd email carries the grading with it,
   and `on delete restrict` so nothing can be orphaned. This reverses an earlier
   decision to leave it unconstrained; see the migration for why.
