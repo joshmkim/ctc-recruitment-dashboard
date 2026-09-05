@@ -37,12 +37,42 @@ function seedingAllowed() {
   return process.env.NODE_ENV !== "production";
 }
 
-function fakeScore(key: string, question: number) {
-  let hash = question + 1;
-  for (const character of key) {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+function hash(text: string, seed: number) {
+  let value = seed;
+  for (const character of text) {
+    value = (value * 31 + character.charCodeAt(0)) >>> 0;
   }
-  return (hash % 4) + 1;
+  return value;
+}
+
+/**
+ * Splits the seeded graders into strict, neutral and generous thirds.
+ *
+ * Applied to two of the five questions rather than all of them, so a grader's
+ * bias is worth a couple of points on a total instead of a five-point swing
+ * wider than the applicant field itself. Which two varies by grader.
+ */
+function graderBias(graderId: string, question: number) {
+  const direction = (hash(graderId, 7) % 3) - 1;
+  return (question + hash(graderId, 3)) % 5 < 2 ? direction : 0;
+}
+
+/**
+ * A score with the same three parts real ones have: how good the application
+ * is, how much this grader happens to differ from their colleagues on it, and
+ * how strict that grader runs in general.
+ *
+ * The first part is keyed on the applicant alone, so every grader reading them
+ * sees the same underlying quality. That matters more than it looks: keyed on
+ * the applicant *and* grader together — as this was — the scores are
+ * independent draws with no shared signal at all, so normalization correctly
+ * flattens every applicant to the mean and the deliberation view looks broken
+ * when it is only reporting that the fixture holds nothing to find.
+ */
+function fakeScore(applicantId: string, graderId: string, question: number) {
+  const quality = (hash(`${applicantId}:${question}`, question + 1) % 4) + 1;
+  const disagreement = (hash(`${applicantId}:${graderId}`, question + 13) % 3) - 1;
+  return Math.min(4, Math.max(1, quality + disagreement + graderBias(graderId, question)));
 }
 
 /**
@@ -84,7 +114,7 @@ export async function seedTestData(): Promise<ImportResult> {
 }
 
 /** Assigns every applicant in the active seeded version and submits stable,
- * varied fake scores for both graders so the deliberation view is complete. */
+ * varied fake scores for every grader so the deliberation view is complete. */
 export async function seedGrades() {
   await requireAdmin();
   if (!seedingAllowed()) {
@@ -120,16 +150,16 @@ export async function seedGrades() {
 
   const submittedAt = new Date().toISOString();
   const rows = (assignments ?? []).map((assignment) => {
-    const key = `${assignment.applicant_id}:${assignment.grader_id}`;
+    const { applicant_id: applicantId, grader_id: graderId } = assignment;
     return {
       set_id: set.id,
-      applicant_id: assignment.applicant_id,
-      grader_id: assignment.grader_id,
-      q1_score: fakeScore(key, 0),
-      q2_score: fakeScore(key, 1),
-      q3_score: fakeScore(key, 2),
-      q4_score: fakeScore(key, 3),
-      q5_score: fakeScore(key, 4),
+      applicant_id: applicantId,
+      grader_id: graderId,
+      q1_score: fakeScore(applicantId, graderId, 0),
+      q2_score: fakeScore(applicantId, graderId, 1),
+      q3_score: fakeScore(applicantId, graderId, 2),
+      q4_score: fakeScore(applicantId, graderId, 3),
+      q5_score: fakeScore(applicantId, graderId, 4),
       submitted_at: submittedAt,
     };
   });

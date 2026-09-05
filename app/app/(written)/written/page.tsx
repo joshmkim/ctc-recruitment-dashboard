@@ -17,7 +17,7 @@ import {
   getApplicantSummariesByIds,
   type ApplicantSummary,
 } from "@/lib/applications";
-import { GRADERS_PER_APPLICANT } from "@/lib/grading";
+import { MAX_GRADERS_PER_APPLICANT } from "@/lib/grading";
 import { getGraderId } from "@/lib/identity";
 
 type PageData = {
@@ -57,7 +57,7 @@ async function loadFor(
 
   const [applicants, assignments, submitted] = await Promise.all([
     getApplicantSummariesByIds(ids),
-    // Their own rows name only themselves, so the co-grader comes from a second
+    // Their own rows name only themselves, so co-graders come from a second
     // read over the same ids.
     listAssignmentsForApplicants(ids),
     listSubmittedScoresForApplicants(ids),
@@ -80,6 +80,10 @@ export default async function WrittenHomePage() {
   } catch {
     data = EMPTY;
   }
+
+  // With no active set there are no applicants to describe, so this value is
+  // never read; the maximum is the safe thing to fall back to.
+  const gradersPerApplicant = activeSet?.gradersPerApplicant ?? MAX_GRADERS_PER_APPLICANT;
 
   // Reduce both tables to one row per applicant before they reach the browser.
   // Sending them whole shipped every assignment and every score to the client
@@ -112,7 +116,7 @@ export default async function WrittenHomePage() {
           )
         : [],
       graded: canManageAssignments
-        ? assignedGraderIds.length === GRADERS_PER_APPLICANT &&
+        ? assignedGraderIds.length === gradersPerApplicant &&
           assignedGraderIds.every((graderId) =>
             submittedAssignmentKeys.has(`${id}:${graderId}`),
           )
@@ -136,6 +140,7 @@ export default async function WrittenHomePage() {
       <ApplicantList
         applicants={rows}
         activeSetId={activeSet?.id ?? null}
+        gradersPerApplicant={gradersPerApplicant}
         canManageAssignments={canManageAssignments}
         showingEveryone={canManageAssignments}
       />

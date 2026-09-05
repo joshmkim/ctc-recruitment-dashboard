@@ -169,12 +169,18 @@ export async function carryOverGraders(setId: string): Promise<ImportResult> {
 export async function createGraderRoster(setId: string, names: string[]): Promise<ImportResult> {
   await requireAdmin();
   const { data: target, error: targetError } = await supabase
-    .from("applicant_sets").select("status").eq("id", setId).maybeSingle();
+    .from("applicant_sets").select("status, graders_per_applicant").eq("id", setId).maybeSingle();
   if (targetError || target?.status !== "anonymized") {
     return { ok: false, message: "Only an anonymized draft can receive a grader roster." };
   }
   const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
-  if (uniqueNames.length < 2) return { ok: false, message: "Add at least two grader names." };
+  // A roster this short cannot give an applicant that many *different* graders.
+  // Refusing here names the problem; letting it through surfaces much later as
+  // an unexplained assignment shortfall.
+  const needed = target.graders_per_applicant;
+  if (uniqueNames.length < needed) {
+    return { ok: false, message: `Add at least ${needed} grader names.` };
+  }
   const { data: created, error } = await supabase
     .from("graders")
     .upsert(uniqueNames.map((name) => ({ name })), { onConflict: "name" })

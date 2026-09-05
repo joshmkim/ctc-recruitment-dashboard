@@ -1,4 +1,4 @@
-import { ASSIGNMENT_SLOTS, GRADERS_PER_APPLICANT, type AssignmentSlot } from "@/lib/grading";
+import { assignmentSlots, type AssignmentSlot } from "@/lib/grading";
 
 export type AssignmentPlanRow = {
   set_id: string;
@@ -39,6 +39,14 @@ export function pairKey(firstId: string, secondId: string) {
   return firstId < secondId ? `${firstId}:${secondId}` : `${secondId}:${firstId}`;
 }
 
+/**
+ * How often each unordered grader pair has read the same application.
+ *
+ * With three graders an applicant contributes three pairs, not one, and
+ * spreading those is what "cross-grader diversity" means here — a trio that
+ * reuses one familiar pair is only two-thirds fresh. Partially assigned
+ * applicants count too, since their existing pairs are already real.
+ */
 export function buildPairCounts(assignments: AssignmentPlanRow[]) {
   const gradersByApplicant = new Map<string, string[]>();
   for (const assignment of assignments) {
@@ -49,9 +57,12 @@ export function buildPairCounts(assignments: AssignmentPlanRow[]) {
 
   const counts = new Map<string, number>();
   for (const graders of gradersByApplicant.values()) {
-    if (graders.length !== GRADERS_PER_APPLICANT) continue;
-    const key = pairKey(graders[0], graders[1]);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    for (let first = 0; first < graders.length; first += 1) {
+      for (let second = first + 1; second < graders.length; second += 1) {
+        const key = pairKey(graders[first], graders[second]);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
   }
   return counts;
 }
@@ -81,6 +92,14 @@ function chooseMinimum<T>(candidates: T[], cost: (candidate: T) => number, rando
   return best.length ? best[Math.floor(random() * best.length)] : undefined;
 }
 
+/**
+ * The next grader to add to an applicant.
+ *
+ * Cost is the repeat count of the pairs this grader would form with everyone
+ * already on the applicant, weighted against how much work they are carrying.
+ * Summing over all of them rather than just the first is what lets a third
+ * grader avoid a stale pairing with either of the two already there.
+ */
 export function choosePartner(
   graders: AssignmentPlanGrader[],
   assignments: AssignmentPlanRow[],
@@ -90,7 +109,6 @@ export function choosePartner(
 ) {
   const assigned = assignments.filter((assignment) => assignment.applicant_id === applicantId);
   const assignedIds = new Set(assigned.map((assignment) => assignment.grader_id));
-  const coGraderId = assigned[0]?.grader_id;
   const loads = buildLoads(graders, assignments);
   const pairCounts = buildPairCounts(assignments);
   const candidates = graders.filter(
@@ -103,9 +121,12 @@ export function choosePartner(
   return chooseMinimum(
     candidates,
     (grader) =>
-      (coGraderId
-        ? PAIR_REPEAT_PENALTY * (pairCounts.get(pairKey(coGraderId, grader.id)) ?? 0)
-        : 0) + (loads.get(grader.id) ?? 0),
+      PAIR_REPEAT_PENALTY *
+        [...assignedIds].reduce(
+          (sum, coGraderId) => sum + (pairCounts.get(pairKey(coGraderId, grader.id)) ?? 0),
+          0,
+        ) +
+      (loads.get(grader.id) ?? 0),
     random,
   );
 }
@@ -119,66 +140,42 @@ function shuffled<T>(items: T[], random: Random) {
   return result;
 }
 
+/**
+ * Fills every empty slot on every applicant, one slot at a time.
+ *
+ * Greedy rather than exhaustive: `choosePartner` already scores a candidate
+ * against everyone the applicant has so far, so adding graders one by one
+ * handles a set of any arity and an applicant at any stage of filling, and
+ * avoids enumerating every trio on a forty-person roster. Applicants are
+ * shuffled so the order slots are filled in does not track the applicant list.
+ */
 export function planAssignments(
   applicants: Array<{ id: string }>,
   graders: AssignmentPlanGrader[],
   assignments: AssignmentPlanRow[],
   random: Random,
+  gradersPerApplicant: number,
 ) {
   const inserts: AssignmentPlanRow[] = [];
   const current = [...assignments];
+  const slots = assignmentSlots(gradersPerApplicant);
   let shortfall = 0;
 
   for (const applicant of shuffled(applicants, random)) {
-    const existing = current.filter((assignment) => assignment.applicant_id === applicant.id);
-    const filledSlots = new Set(existing.map((assignment) => assignment.slot));
-    const missingSlots = ASSIGNMENT_SLOTS.filter((slot) => !filledSlots.has(slot));
-    if (!missingSlots.length) continue;
+    const filledSlots = new Set(
+      current
+        .filter((assignment) => assignment.applicant_id === applicant.id)
+        .map((assignment) => assignment.slot),
+    );
+    const missingSlots = slots.filter((slot) => !filledSlots.has(slot));
 
-    const assignedIds = new Set(existing.map((assignment) => assignment.grader_id));
-    const eligible = graders.filter((grader) => grader.is_active && !assignedIds.has(grader.id));
-
-    if (missingSlots.length === GRADERS_PER_APPLICANT) {
-      const loads = buildLoads(graders, current);
-      const pairCounts = buildPairCounts(current);
-      const pairs: Array<[AssignmentPlanGrader, AssignmentPlanGrader]> = [];
-      for (let first = 0; first < eligible.length; first += 1) {
-        for (let second = first + 1; second < eligible.length; second += 1) {
-          pairs.push([eligible[first], eligible[second]]);
-        }
-      }
-
-      const pair = chooseMinimum(
-        pairs,
-        ([first, second]) =>
-          PAIR_REPEAT_PENALTY * (pairCounts.get(pairKey(first.id, second.id)) ?? 0) +
-          (loads.get(first.id) ?? 0) +
-          (loads.get(second.id) ?? 0),
-        random,
-      );
-      if (!pair) {
-        shortfall += missingSlots.length;
-        continue;
-      }
-
-      const pairInSlotOrder = random() < 0.5 ? pair : [pair[1], pair[0]];
-      for (const [index, slot] of missingSlots.entries()) {
-        const assignment = {
-          set_id: "",
-          applicant_id: applicant.id,
-          grader_id: pairInSlotOrder[index].id,
-          slot,
-        };
-        inserts.push(assignment);
-        current.push(assignment);
-      }
-      continue;
-    }
-
-    for (const slot of missingSlots) {
+    for (const [index, slot] of missingSlots.entries()) {
       const partner = choosePartner(graders, current, applicant.id, undefined, random);
+      // Nobody eligible is left — every active grader is already on this
+      // applicant. The remaining slots stay empty, and the deliberation view
+      // reports the applicant as understaffed rather than the plan pretending.
       if (!partner) {
-        shortfall += missingSlots.length - missingSlots.indexOf(slot);
+        shortfall += missingSlots.length - index;
         break;
       }
       const assignment = { set_id: "", applicant_id: applicant.id, grader_id: partner.id, slot };

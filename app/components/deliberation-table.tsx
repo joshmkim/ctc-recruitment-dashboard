@@ -34,8 +34,7 @@ import {
 import type { Decision } from "@/lib/actions/admin";
 import type { DeliberationApplicant } from "@/lib/actions/deliberation";
 import {
-  ASSIGNMENT_SLOTS,
-  GRADERS_PER_APPLICANT,
+  assignmentSlots,
 } from "@/lib/grading";
 import { QUESTIONS } from "@/lib/questions";
 import { cn } from "@/lib/utils";
@@ -70,6 +69,11 @@ const formatOverall = (average: number) =>
   average
     ? `${Number((average * QUESTIONS.length).toFixed(2))}/${OVERALL_MAX}`
     : "—";
+/** Signed, because the sign is the whole point: standard deviations above or
+ *  below the grader's own average. Shown under the adjusted total, which is the
+ *  same figure in points. */
+const formatSigma = (z: number | null) =>
+  z === null ? "—" : `${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(2)}σ`;
 const formatNormalized = (total: number | null) =>
   total === null ? "—" : `${Number(total.toFixed(2))}/${OVERALL_MAX}`;
 
@@ -78,14 +82,15 @@ const GRID = "grid grid-cols-[minmax(0,1fr)_repeat(6,56px)] gap-2";
 /** Why an applicant cannot be deliberated on yet, in the order that matters:
  *  an empty slot is a setup mistake, an unsubmitted score is just unfinished. */
 function describeProblem(applicant: DeliberationApplicant) {
-  const empty = GRADERS_PER_APPLICANT - applicant.assignedCount;
+  const expected = applicant.gradersPerApplicant;
+  const empty = expected - applicant.assignedCount;
   // The slot constraints make this unreachable, so seeing it means the migration
   // has not run or rows were edited by hand — which is what the banner is for.
   if (empty < 0) {
-    return `${applicant.assignedCount} graders assigned, more than the ${GRADERS_PER_APPLICANT} the database should allow`;
+    return `${applicant.assignedCount} graders assigned, more than the ${expected} the database should allow`;
   }
   if (empty > 0) {
-    return `${applicant.assignedCount} of ${GRADERS_PER_APPLICANT} graders assigned — ${empty} slot${empty === 1 ? "" : "s"} never filled`;
+    return `${applicant.assignedCount} of ${expected} graders assigned — ${empty} slot${empty === 1 ? "" : "s"} never filled`;
   }
   const awaiting = applicant.graders.filter((grader) => !grader.submitted);
   return `awaiting ${awaiting.map((grader) => grader.graderName).join(" and ")}`;
@@ -93,9 +98,13 @@ function describeProblem(applicant: DeliberationApplicant) {
 
 export function DeliberationTable({
   activeSetId,
+  gradersPerApplicant,
   applicants,
 }: {
   activeSetId: string;
+  /** From the active set. Sets created before the move to three graders keep
+   *  their two, so this is not a constant. */
+  gradersPerApplicant: number;
   applicants: DeliberationApplicant[];
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
@@ -135,15 +144,17 @@ export function DeliberationTable({
             : right.decision === decisionFirst;
         if (leftPreferred !== rightPreferred) return leftPreferred ? -1 : 1;
       }
+      // A missing normalized score sorts to the bottom whichever way the column
+      // points. Zero would put it mid-pack now that the scale is signed.
       const a =
         sortKey === "normalized"
-          ? left.normalizedTotal ?? 0
+          ? left.normalizedZ ?? (descending ? -Infinity : Infinity)
           : column === null
             ? left.overallAverage
             : left.questionAverages[column];
       const b =
         sortKey === "normalized"
-          ? right.normalizedTotal ?? 0
+          ? right.normalizedZ ?? (descending ? -Infinity : Infinity)
           : column === null
             ? right.overallAverage
             : right.questionAverages[column];
@@ -165,8 +176,8 @@ export function DeliberationTable({
         <div>
           <h2 className="font-heading text-lg font-semibold text-brand-dark">Deliberation</h2>
           <p className="text-sm text-muted-foreground">
-            Every applicant, scored by {GRADERS_PER_APPLICANT} graders. Expand a row
-            to compare the two question by question.
+            Every applicant, scored by {gradersPerApplicant} graders. Expand a row
+            to compare them question by question.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -201,20 +212,30 @@ export function DeliberationTable({
               </DialogHeader>
               <div className="flex flex-col gap-3 text-sm text-secondary-foreground">
                 <p>
-                  For each applicant both graders score, we compare their totals
-                  out of 20. Repeated comparisons estimate whether each grader
-                  typically scores above or below their co-graders.
+                  Every total a grader submits goes into their own average and
+                  spread. A score becomes a z-score: how many standard deviations
+                  above or below that grader&rsquo;s own average it sits. An
+                  applicant&rsquo;s normalized score is the mean of their
+                  graders&rsquo; z-scores, so +0.50σ means half a standard
+                  deviation better than the typical application its graders read.
                 </p>
                 <p>
-                  That tendency is subtracted from their total before the two
-                  adjusted totals are averaged. A positive tendency means a grader
-                  is relatively generous; a negative one means they are relatively
-                  strict.
+                  That is then mapped back onto the {OVERALL_MAX}-point scale as
+                  the adjusted total, so it can be read against the raw one. Both
+                  say the same thing; sorting uses the σ figure, which is not
+                  clamped at the ends.
                 </p>
                 <p>
-                  Estimates use only the current applicant version and are pulled
-                  toward neutral until a grader has enough paired reviews, so a
-                  few scores cannot move an applicant much.
+                  This removes both how high a grader scores and how widely they
+                  spread their scores. A grader who never leaves the 3&ndash;4
+                  band and one who uses the whole range end up equally
+                  influential, which a plain average does not manage.
+                </p>
+                <p>
+                  Figures use only the current applicant version. A grader with
+                  very few submissions has their spread pulled toward the whole
+                  set&rsquo;s, so two similar scores cannot divide into a wild
+                  result before they have a track record.
                 </p>
               </div>
             </DialogContent>
@@ -370,13 +391,18 @@ export function DeliberationTable({
                           !applicant.ready && "font-medium text-destructive",
                         )}
                       >
-                        {applicant.scoredCount}/{GRADERS_PER_APPLICANT}
+                        {applicant.scoredCount}/{applicant.gradersPerApplicant}
                       </td>
                       <td className="px-3 py-3 text-center">
-                        {applicant.normalizedTotal !== null ? (
-                          <span className="rounded-full bg-brand-soft px-2 py-1 text-xs font-medium tabular-nums text-brand-dark">
-                            {formatNormalized(applicant.normalizedTotal)}
-                          </span>
+                        {applicant.normalizedZ !== null ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="rounded-full bg-brand-soft px-2 py-1 text-xs font-medium tabular-nums text-brand-dark">
+                              {formatNormalized(applicant.normalizedTotal)}
+                            </span>
+                            <span className="text-[11px] tabular-nums text-muted-foreground">
+                              {formatSigma(applicant.normalizedZ)}
+                            </span>
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -408,7 +434,7 @@ export function DeliberationTable({
                               <span className="text-center">Avg</span>
                             </div>
 
-                            {ASSIGNMENT_SLOTS.map((slot) => {
+                            {assignmentSlots(applicant.gradersPerApplicant).map((slot) => {
                               const grader = applicant.graders.find((item) => item.slot === slot);
                               return (
                                 <div key={slot} className={cn(GRID, "border-b border-border px-3 py-2 text-sm last:border-b-0")}>
@@ -499,13 +525,14 @@ function labelFor(applicant: DeliberationApplicant, showNames: boolean) {
 
 function normalizationLabel(grader: DeliberationApplicant["graders"][number]) {
   if (!grader.hasSufficientHistory) {
-    return `Insufficient history (${grader.normalization.pairedReviews} paired reviews)`;
+    const count = grader.stats.submissions;
+    return `Insufficient history (${count} submission${count === 1 ? "" : "s"})`;
   }
 
-  const effect = grader.normalization.effect;
-  if (Math.abs(effect) < 0.05) return "Neutral scoring tendency";
-  return `${effect > 0 ? "+" : "−"}${Math.abs(effect).toFixed(1)} ${
-    effect > 0 ? "generous" : "strict"
+  const { tendency } = grader;
+  if (Math.abs(tendency) < 0.05) return "Neutral scoring tendency";
+  return `${tendency > 0 ? "+" : "−"}${Math.abs(tendency).toFixed(1)} ${
+    tendency > 0 ? "generous" : "strict"
   }`;
 }
 

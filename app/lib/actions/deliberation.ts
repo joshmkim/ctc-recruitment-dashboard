@@ -4,14 +4,13 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { requireActiveApplicantSet } from "@/lib/applicant-sets";
 import { getApplicant, getApplicants } from "@/lib/applications";
 import type { Decision } from "@/lib/actions/admin";
-import { GRADERS_PER_APPLICANT, type AssignmentSlot } from "@/lib/grading";
+import { type AssignmentSlot } from "@/lib/grading";
 import { QUESTION_IDS } from "@/lib/questions";
 import {
-  estimateGraderEffects,
-  MIN_PAIRED_REVIEWS,
-  normalizeTotal,
-  type GraderNormalization,
-  type ScorePair,
+  estimateGraderStats,
+  MIN_SUBMISSIONS_FOR_Z,
+  zScore,
+  type GraderStats,
 } from "@/lib/score-normalization";
 import { selectAllRows, supabase } from "@/lib/supabase";
 
@@ -44,7 +43,15 @@ export type GraderSubmission = {
   overall: number;
   total: number;
   comments: string;
-  normalization: GraderNormalization;
+  /** This grader's own average and spread across the set. */
+  stats: GraderStats;
+  /** Points this grader's average sits above (generous) or below (strict) the
+   *  average across the whole set. Only for display — the z-score already
+   *  accounts for it. */
+  tendency: number;
+  /** How far this submission sits from that grader's own average, in standard
+   *  deviations. Zero until they submit. */
+  z: number;
   hasSufficientHistory: boolean;
 };
 
@@ -57,22 +64,27 @@ export type DeliberationApplicant = {
   graduationYear: string | null;
   resumeUrl: string | null;
   role: string | null;
-  /** One entry per filled slot, in slot order, so the two graders keep the same
-   *  position across renders. Shorter than `GRADERS_PER_APPLICANT` only when an
+  /** One entry per filled slot, in slot order, so the graders keep the same
+   *  position across renders. Shorter than the set's arity only when an
    *  applicant is missing an assignment, which the view reports as a problem. */
   graders: GraderSubmission[];
   assignedCount: number;
   scoredCount: number;
-  /** Both slots assigned and both graders submitted — safe to deliberate on. */
+  /** How many graders this applicant's set gives each applicant. */
+  gradersPerApplicant: number;
+  /** Every slot assigned and every grader submitted — safe to deliberate on. */
   ready: boolean;
   questionAverages: number[];
-  /** How far apart the two graders are on each question. Empty until both
-   *  submit. A large gap on one question is the signal worth discussing, and it
-   *  disappears into an average of averages. */
+  /** The spread between the highest and lowest grader on each question. Empty
+   *  until everyone submits. A large gap on one question is the signal worth
+   *  discussing, and it disappears into an average of averages. */
   questionGaps: number[];
   maxGap: number;
   overallAverage: number;
-  /** Adjusted total out of 20. Empty until both graders submit. */
+  /** Mean of the graders' z-scores. Null until every grader submits. */
+  normalizedZ: number | null;
+  /** That same figure on the 5–20 point scale, for reading beside the raw
+   *  total. Rank on `normalizedZ` — this one is clamped at the ends. */
   normalizedTotal: number | null;
   decision: Decision | null;
 };
@@ -88,28 +100,60 @@ const scoreValues = (row: ScoreRow) => [
   row.q5_score,
 ];
 const total = (values: number[]) => values.reduce((sum, value) => sum + value, 0);
-const NEUTRAL_NORMALIZATION: GraderNormalization = { effect: 0, pairedReviews: 0 };
+
+/** A total is five questions scored 1–4, so it can only land in 5..20. */
+const TOTAL_MIN = QUESTION_IDS.length;
+const TOTAL_MAX = QUESTION_IDS.length * 4;
+
+/**
+ * Puts a normalized score back on the 5–20 point scale, so it can be read
+ * against the raw total instead of only against itself.
+ *
+ * The scale factor is the *within-grader* spread, not the pool's. A z says how
+ * far a total sat from its own grader's average, measured in that grader's own
+ * spread, so turning it back into points has to multiply by the same quantity.
+ * `pooled.sd` also carries the variation between graders, and using it stretches
+ * every applicant away from the middle by however much the graders disagreed
+ * with each other — which is precisely what this correction exists to remove.
+ */
+const normalizedTotalOf = (z: number, pooled: GraderStats, withinSd: number) =>
+  Math.min(TOTAL_MAX, Math.max(TOTAL_MIN, pooled.mean + z * withinSd));
 
 type ScoreContext = {
   slotsByApplicant: Map<string, AssignmentRow[]>;
   scoresByAssignment: Map<string, ScoreRow>;
   graderNames: Map<string, string>;
-  graderEffects: Map<string, GraderNormalization>;
+  graderStats: Map<string, GraderStats>;
+  /** Average and spread across every submission in the set. The reference
+   *  point for calling a grader generous or strict, and the fallback for one
+   *  with no history of their own. */
+  pooled: GraderStats;
+  /** Spread of a typical grader's own scoring, the unit a z-score is in. */
+  withinSd: number;
+  gradersPerApplicant: number;
 };
 
 type ApplicantScoreSummary = {
   graders: GraderSubmission[];
   assignedCount: number;
   scoredCount: number;
+  gradersPerApplicant: number;
   ready: boolean;
   questionAverages: number[];
   questionGaps: number[];
   maxGap: number;
   overallAverage: number;
+  normalizedZ: number | null;
+  /** The same figure as `normalizedZ`, mapped back onto the 5–20 point scale.
+   *  For reading beside the raw total; rank on `normalizedZ`, which is not
+   *  clamped and so never ties two applicants at the ends. */
   normalizedTotal: number | null;
 };
 
-async function loadScoreContext(setId: string): Promise<ScoreContext> {
+async function loadScoreContext(
+  setId: string,
+  gradersPerApplicant: number,
+): Promise<ScoreContext> {
   // Averages and coverage are computed from every row, so a partial read here
   // would quietly change the numbers the club deliberates on.
   const [assignmentsResult, scoresResult, gradersResult] = await Promise.all([
@@ -150,28 +194,32 @@ async function loadScoreContext(setId: string): Promise<ScoreContext> {
     ]),
   );
 
-  const pairs: ScorePair[] = [];
+  // Every submission a grader made counts toward their own mean and spread,
+  // including ones on applicants nobody else has finished yet. Waiting for a
+  // complete applicant, as the old pairwise model had to, would throw away most
+  // of the history early in a grading round.
+  const submissions: Array<{ graderId: string; total: number }> = [];
   for (const [applicantId, assigned] of slotsByApplicant) {
-    const slots = [...assigned].sort((left, right) => left.slot - right.slot);
-    if (slots.length !== GRADERS_PER_APPLICANT) continue;
-    const first = slots[0];
-    const second = slots[1];
-    const firstScore = scoresByAssignment.get(`${applicantId}:${first.grader_id}`);
-    const secondScore = scoresByAssignment.get(`${applicantId}:${second.grader_id}`);
-    if (!firstScore || !secondScore) continue;
-    pairs.push({
-      firstGraderId: first.grader_id,
-      firstTotal: total(scoreValues(firstScore)),
-      secondGraderId: second.grader_id,
-      secondTotal: total(scoreValues(secondScore)),
-    });
+    for (const assignment of assigned) {
+      const score = scoresByAssignment.get(`${applicantId}:${assignment.grader_id}`);
+      if (!score) continue;
+      submissions.push({
+        graderId: assignment.grader_id,
+        total: total(scoreValues(score)),
+      });
+    }
   }
+
+  const { pooled, withinSd, byGrader } = estimateGraderStats(submissions);
 
   return {
     slotsByApplicant,
     scoresByAssignment,
     graderNames,
-    graderEffects: estimateGraderEffects(pairs),
+    graderStats: byGrader,
+    pooled,
+    withinSd,
+    gradersPerApplicant,
   };
 }
 
@@ -186,7 +234,8 @@ function scoresForApplicant(
   const graders: GraderSubmission[] = slots.map((assignment) => {
     const score = ctx.scoresByAssignment.get(`${applicantId}:${assignment.grader_id}`);
     const values = score ? scoreValues(score) : [];
-    const normalization = ctx.graderEffects.get(assignment.grader_id) ?? NEUTRAL_NORMALIZATION;
+    const stats = ctx.graderStats.get(assignment.grader_id) ?? ctx.pooled;
+    const graderTotal = total(values);
     return {
       slot: assignment.slot,
       graderId: assignment.grader_id,
@@ -194,56 +243,61 @@ function scoresForApplicant(
       submitted: Boolean(score),
       values,
       overall: average(values),
-      total: total(values),
+      total: graderTotal,
       comments: score?.comments?.trim() ?? "",
-      normalization,
-      hasSufficientHistory: normalization.pairedReviews >= MIN_PAIRED_REVIEWS,
+      stats,
+      tendency: stats.mean - ctx.pooled.mean,
+      z: score ? zScore(graderTotal, stats) : 0,
+      hasSufficientHistory: stats.submissions >= MIN_SUBMISSIONS_FOR_Z,
     };
   });
 
+  const { gradersPerApplicant } = ctx;
   const submitted = graders.filter((grader) => grader.submitted);
   const questionAverages = QUESTION_IDS.map((_, index) =>
     average(submitted.map((grader) => grader.values[index])),
   );
+  const normalizedZ =
+    submitted.length === gradersPerApplicant
+      ? average(submitted.map((grader) => grader.z))
+      : null;
+
+  // The spread, not a difference: with three graders the pair furthest apart is
+  // the disagreement worth talking about.
   const questionGaps =
-    submitted.length === GRADERS_PER_APPLICANT
-      ? QUESTION_IDS.map((_, index) =>
-          Math.abs(submitted[0].values[index] - submitted[1].values[index]),
-        )
+    submitted.length === gradersPerApplicant
+      ? QUESTION_IDS.map((_, index) => {
+          const values = submitted.map((grader) => grader.values[index]);
+          return Math.max(...values) - Math.min(...values);
+        })
       : [];
 
   return {
     graders,
     assignedCount: slots.length,
     scoredCount: submitted.length,
+    gradersPerApplicant,
     ready:
-      slots.length === GRADERS_PER_APPLICANT &&
-      submitted.length === GRADERS_PER_APPLICANT,
+      slots.length === gradersPerApplicant && submitted.length === gradersPerApplicant,
     questionAverages,
     questionGaps,
     maxGap: questionGaps.length ? Math.max(...questionGaps) : 0,
     overallAverage: average(questionAverages),
+    normalizedZ,
     normalizedTotal:
-      submitted.length === GRADERS_PER_APPLICANT
-        ? average(
-            submitted.map((grader) =>
-              normalizeTotal(
-                grader.total,
-                grader.normalization.effect,
-                QUESTION_IDS.length * 4,
-              ),
-            ),
-          )
-        : null,
+      normalizedZ === null
+        ? null
+        : normalizedTotalOf(normalizedZ, ctx.pooled, ctx.withinSd),
   };
 }
 
 export async function getWrittenScoreSummary(
   applicantId: string,
   setId: string,
+  gradersPerApplicant: number,
 ): Promise<ApplicantScoreSummary> {
   await requireAdmin();
-  const ctx = await loadScoreContext(setId);
+  const ctx = await loadScoreContext(setId, gradersPerApplicant);
   return scoresForApplicant(applicantId, ctx);
 }
 
@@ -253,7 +307,7 @@ export async function getDeliberationApplicants(): Promise<DeliberationApplicant
 
   const [applicants, ctx, decisionsResult] = await Promise.all([
     getApplicants(set.id),
-    loadScoreContext(set.id),
+    loadScoreContext(set.id, set.gradersPerApplicant),
     supabase.from("decisions").select("applicant_id, decision").eq("set_id", set.id),
   ]);
 

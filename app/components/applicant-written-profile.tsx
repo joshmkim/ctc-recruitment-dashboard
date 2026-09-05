@@ -12,6 +12,18 @@ export type WrittenProfile = Awaited<ReturnType<typeof getWrittenProfile>>;
 const safeUrl = (value: string | null) =>
   value && /^https?:\/\//i.test(value) ? value : null;
 
+const WRITTEN_MAX = QUESTIONS.length * 4;
+
+/** The adjusted total in points, with the standard deviations it came from —
+ *  the same figure twice, so it can be read against the raw score beside it. */
+const formatNormalized = (
+  total: number | null | undefined,
+  z: number | null | undefined,
+) =>
+  total === null || total === undefined || z === null || z === undefined
+    ? "N/A"
+    : `${total.toFixed(2)}/${WRITTEN_MAX} (${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(2)}σ)`;
+
 const display = (value: string | null | undefined) => {
   const text = value?.trim();
   return text ? text : "N/A";
@@ -27,7 +39,7 @@ export function ApplicantWrittenProfile({
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (!profile) return <p className="text-sm text-muted-foreground">Loading applicant profile…</p>;
 
-  const { applicant, graders, rawTotal, normalizedTotal } = profile;
+  const { applicant, graders, rawTotal, normalizedZ, normalizedTotal } = profile;
   const link = safeUrl(applicant.profile.otherLinks);
   const resumeId = applicant.profile.resumeUrl
     ? driveFileIds(applicant.profile.resumeUrl)[0]
@@ -67,8 +79,8 @@ export function ApplicantWrittenProfile({
           </p>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Written score: {rawTotal?.toFixed(2) ?? "N/A"}/20 · normalized:{" "}
-          {normalizedTotal?.toFixed(2) ?? "N/A"}/20
+          Written score: {rawTotal?.toFixed(2) ?? "N/A"}/{WRITTEN_MAX} · normalized:{" "}
+          {formatNormalized(normalizedTotal, normalizedZ)}
         </p>
       </div>
       <Tabs defaultValue="q1">

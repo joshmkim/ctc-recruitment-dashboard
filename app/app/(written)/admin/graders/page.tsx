@@ -25,5 +25,11 @@ export default async function GradersPage() {
     ).length,
   }));
 
-  return <GraderDashboard activeSetId={set.id} graders={rows} />;
+  return (
+    <GraderDashboard
+      activeSetId={set.id}
+      gradersPerApplicant={set.gradersPerApplicant}
+      graders={rows}
+    />
+  );
 }

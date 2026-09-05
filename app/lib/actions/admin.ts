@@ -13,7 +13,7 @@ import {
   planAssignments,
   type AssignmentPlanRow,
 } from "@/lib/assignment-plan";
-import { GRADERS_PER_APPLICANT } from "@/lib/grading";
+
 import { selectAllRows, supabase } from "@/lib/supabase";
 import { addGraderForSet, listGraders } from "@/lib/actions/graders";
 
@@ -115,6 +115,7 @@ export async function previewAutoAssign(expectedSetId: string): Promise<AutoAssi
     graders,
     assignments,
     mulberry32(hashSeed(set.id)),
+    set.gradersPerApplicant,
   );
   const pairCounts = buildPairCounts([...assignments, ...inserts]);
 
@@ -139,9 +140,9 @@ export async function autoAssign(expectedSetId: string) {
     loadAssignmentState(set.id),
   ]);
   const activeCount = graders.filter((grader) => grader.is_active).length;
-  if (activeCount < GRADERS_PER_APPLICANT) {
+  if (activeCount < set.gradersPerApplicant) {
     throw new Error(
-      `Every applicant needs ${GRADERS_PER_APPLICANT} different graders, so at least ${GRADERS_PER_APPLICANT} must be active.`,
+      `Every applicant needs ${set.gradersPerApplicant} different graders, so at least ${set.gradersPerApplicant} must be active.`,
     );
   }
 
@@ -150,6 +151,7 @@ export async function autoAssign(expectedSetId: string) {
     graders,
     assignments,
     mulberry32(hashSeed(set.id)),
+    set.gradersPerApplicant,
   );
 
   let assigned = 0;
@@ -229,7 +231,7 @@ export async function deactivateAndRedistribute(
       random,
     );
     // The outgoing row is deleted below, so the replacement inherits its slot
-    // and the applicant keeps both graders. When there is no eligible target the
+    // and the applicant keeps a full set of graders. When there is no target the
     // slot is left empty, which the deliberation view reports as understaffed.
     if (!target) continue;
     const replacement = {

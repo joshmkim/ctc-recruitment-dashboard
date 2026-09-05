@@ -127,6 +127,18 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+const WRITTEN_MAX = QUESTIONS.length * 4;
+
+/** The adjusted total in points, with the standard deviations it came from —
+ *  the same figure twice, so it can be read against the raw score above it. */
+const formatNormalized = (
+  total: number | null | undefined,
+  z: number | null | undefined,
+) =>
+  total === null || total === undefined || z === null || z === undefined
+    ? "N/A"
+    : `${total.toFixed(2)}/${WRITTEN_MAX} (${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(2)}σ)`;
+
 function WrittenScores({ written }: { written?: WrittenProfile | null }) {
   if (written === undefined) {
     return <p className="text-sm text-muted-foreground">Loading written scores…</p>;
@@ -135,15 +147,15 @@ function WrittenScores({ written }: { written?: WrittenProfile | null }) {
     return <p className="text-sm text-muted-foreground">N/A</p>;
   }
 
-  const { graders, rawTotal, normalizedTotal } = written;
+  const { graders, rawTotal, normalizedZ, normalizedTotal } = written;
 
   return (
     <div className="text-sm">
       <p>
-        Raw score: {rawTotal?.toFixed(2) ?? "N/A"}/20
+        Raw score: {rawTotal?.toFixed(2) ?? "N/A"}/{WRITTEN_MAX}
       </p>
       <p>
-        Normalized score: {normalizedTotal?.toFixed(2) ?? "N/A"}/20
+        Normalized score: {formatNormalized(normalizedTotal, normalizedZ)}
       </p>
       {graders.length ? (
         graders.map((grader) => (
@@ -156,7 +168,8 @@ function WrittenScores({ written }: { written?: WrittenProfile | null }) {
                 </li>
               ))}
               <li className="font-semibold">
-                Total: {grader.submitted ? `${grader.total} / 20` : "N/A / 20"}
+                Total:{" "}
+                {grader.submitted ? `${grader.total} / ${WRITTEN_MAX}` : `N/A / ${WRITTEN_MAX}`}
               </li>
             </ul>
           </article>

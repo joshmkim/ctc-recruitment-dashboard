@@ -20,7 +20,6 @@ import {
   reassignGrader,
   unassignGrader,
 } from "@/lib/actions/assignments";
-import { GRADERS_PER_APPLICANT } from "@/lib/grading";
 
 /** Already reduced server-side: the graders on this applicant and whether the
  *  relevant grader has submitted, rather than the assignment and score tables. */
@@ -36,11 +35,15 @@ export type ApplicantRow = {
 export function ApplicantList({
   applicants,
   activeSetId,
+  gradersPerApplicant,
   canManageAssignments,
   showingEveryone,
 }: {
   applicants: ApplicantRow[];
   activeSetId: string | null;
+  /** From the active set — sets created before the move to three graders keep
+   *  their two, so this is not a constant. */
+  gradersPerApplicant: number;
   canManageAssignments: boolean;
   /** True on the admin view. Otherwise `applicants` is already just the
    *  signed-in grader's queue, scoped on the server. */
@@ -100,7 +103,7 @@ export function ApplicantList({
               !applicant.assignedGraderIds.includes(g.id),
           );
           // Both slots taken means assignGrader would refuse, so do not offer it.
-          const hasRoom = applicant.assignedGraderIds.length < GRADERS_PER_APPLICANT;
+          const hasRoom = applicant.assignedGraderIds.length < gradersPerApplicant;
 
           return (
             <div

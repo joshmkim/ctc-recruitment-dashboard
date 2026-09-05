@@ -39,7 +39,7 @@ export default async function ScorePage(
     }
   }
 
-  // An application is readable by the two graders holding it and by an admin.
+  // An application is readable by the graders holding it and by an admin.
   // The page used to render for anyone who could guess an email, which put the
   // essays, name, and resume of every applicant one URL away.
   //

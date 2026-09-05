@@ -30,7 +30,6 @@ import {
   type AutoAssignPreview,
 } from "@/lib/actions/admin";
 import type { Grader } from "@/lib/actions/graders";
-import { GRADERS_PER_APPLICANT } from "@/lib/grading";
 
 export type GraderProgress = Grader & {
   assigned: number;
@@ -64,9 +63,13 @@ function PreviewRow({
 
 export function GraderDashboard({
   activeSetId,
+  gradersPerApplicant,
   graders,
 }: {
   activeSetId: string;
+  /** From the active set. Sets created before the move to three graders keep
+   *  their two, so this is not a constant. */
+  gradersPerApplicant: number;
   graders: GraderProgress[];
 }) {
   const router = useRouter();
@@ -81,8 +84,8 @@ export function GraderDashboard({
   const active = graders.filter((grader) => grader.is_active);
   const selectedTargetSet = new Set(selectedTargets);
 
-  // Two graders on one applicant have to be two different people.
-  const enoughGraders = active.length >= GRADERS_PER_APPLICANT;
+  // The graders on one applicant all have to be different people.
+  const enoughGraders = active.length >= gradersPerApplicant;
 
   function run(task: () => Promise<void>, fallback: string) {
     startTransition(async () => {
@@ -186,7 +189,7 @@ export function GraderDashboard({
         <section className="rounded-2xl border border-brand/35 bg-brand-soft p-5">
           <h2 className="font-heading font-semibold text-brand-dark">Auto-assign</h2>
           <p className="mt-1 text-sm text-secondary-foreground">
-            Give every applicant {GRADERS_PER_APPLICANT} graders with varied pairings,
+            Give every applicant {gradersPerApplicant} graders with varied pairings,
             without replacing manual assignments.
           </p>
           <div className="mt-3 flex items-center gap-2">
@@ -195,7 +198,7 @@ export function GraderDashboard({
             </Button>
             {!enoughGraders ? (
               <span className="text-sm text-secondary-foreground">
-                Needs {GRADERS_PER_APPLICANT} active graders.
+                Needs {gradersPerApplicant} active graders.
               </span>
             ) : null}
           </div>
@@ -256,7 +259,7 @@ export function GraderDashboard({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              Assign {GRADERS_PER_APPLICANT} graders to every applicant?
+              Assign {gradersPerApplicant} graders to every applicant?
             </DialogTitle>
             <DialogDescription>
               This only adds assignments. Nothing already assigned or already
@@ -314,7 +317,7 @@ export function GraderDashboard({
 
               {preview.toCreate === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  Every applicant already has {GRADERS_PER_APPLICANT} graders, so
+                  Every applicant already has {gradersPerApplicant} graders, so
                   there is nothing to do.
                 </p>
               ) : null}

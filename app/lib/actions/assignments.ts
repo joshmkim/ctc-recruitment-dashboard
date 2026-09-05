@@ -7,7 +7,7 @@ import {
   assertActiveSetUnchanged,
   requireActiveApplicantSet,
 } from "@/lib/applicant-sets";
-import { ASSIGNMENT_SLOTS, GRADERS_PER_APPLICANT } from "@/lib/grading";
+import { assignmentSlots } from "@/lib/grading";
 import { getGraderId } from "@/lib/identity";
 import { selectAllRows, selectRowsIn, supabase } from "@/lib/supabase";
 
@@ -50,7 +50,7 @@ export async function listMyAssignments(): Promise<Assignment[]> {
   return data ?? [];
 }
 
-/** Both graders on each of the given applicants. A grader's queue shows who
+/** Every grader on each of the given applicants. A grader's queue shows who
  *  else is reading the same application, which their own rows do not say. */
 export async function listAssignmentsForApplicants(
   applicantIds: string[],
@@ -103,10 +103,12 @@ export async function assignGrader(
   }
 
   const taken = new Set(rows.map((row) => row.slot));
-  const slot = ASSIGNMENT_SLOTS.find((candidate) => !taken.has(candidate));
+  const slot = assignmentSlots(set.gradersPerApplicant).find(
+    (candidate) => !taken.has(candidate),
+  );
   if (slot === undefined) {
     throw new Error(
-      `This applicant already has ${GRADERS_PER_APPLICANT} graders. Unassign one before adding another.`,
+      `This applicant already has ${set.gradersPerApplicant} graders. Unassign one before adding another.`,
     );
   }
 

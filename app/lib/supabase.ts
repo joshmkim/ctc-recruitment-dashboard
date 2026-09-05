@@ -67,9 +67,10 @@ export async function selectAllRows<T>(
  * 200 ids per request, because the list travels in the query string and a long
  * enough one produces a URL that intermediaries truncate or refuse. It also
  * keeps each response under the row cap above: the callers here read
- * `assignments` and `written_scores`, which hold at most `GRADERS_PER_APPLICANT`
- * rows per applicant, so 200 ids can return at most 400 rows. Raising this
- * without checking that ratio would start silently truncating again.
+ * `assignments` and `written_scores`, which hold at most
+ * `MAX_GRADERS_PER_APPLICANT` rows per applicant, so 200 ids can return at most
+ * 600 rows. Raising either this or that ceiling without checking the product
+ * against the 1000-row cap would start silently truncating again.
  */
 const IN_CHUNK = 200;
 

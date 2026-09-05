@@ -7,5 +7,11 @@ export default async function DeliberationPage() {
     requireActiveApplicantSet(),
     getDeliberationApplicants(),
   ]);
-  return <DeliberationTable activeSetId={set.id} applicants={applicants} />;
+  return (
+    <DeliberationTable
+      activeSetId={set.id}
+      gradersPerApplicant={set.gradersPerApplicant}
+      applicants={applicants}
+    />
+  );
 }
