@@ -1,13 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { Fragment, useMemo, useState, useTransition } from "react";
 import {
+  ChevronDownIcon,
+  ChevronUpIcon,
   Loader2Icon,
   PlusIcon,
   ShuffleIcon,
   UserMinusIcon,
   UserPlusIcon,
+  XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -29,12 +32,178 @@ import {
   reactivateGrader,
   type AutoAssignPreview,
 } from "@/lib/actions/admin";
+import { assignGrader, unassignGrader } from "@/lib/actions/assignments";
 import type { Grader } from "@/lib/actions/graders";
 
 export type GraderProgress = Grader & {
   assigned: number;
   graded: number;
 };
+
+/** One application on a grader's roster. `scored` is why a chip may not be
+ *  removable: `unassignGrader` refuses once a score exists, so the × is not
+ *  offered rather than offered and rejected. */
+export type RosterEntry = {
+  applicantId: string;
+  alias: string;
+  scored: boolean;
+};
+
+/** An applicant with at least one free slot. */
+export type OpenApplicant = { id: string; alias: string };
+
+/** Enough of the pick list to scan without turning it into a scroll of 260. */
+const PICK_LIMIT = 12;
+
+/**
+ * One grader's applications, with a way to drop and add them.
+ *
+ * Applicant-first assignment already lives on `/written`; this is the same two
+ * server actions read the other way round, for when the question is "what is
+ * this person holding" rather than "who has this application".
+ */
+function GraderRoster({
+  activeSetId,
+  grader,
+  roster,
+  openApplicants,
+  pending,
+  run,
+}: {
+  activeSetId: string;
+  grader: GraderProgress;
+  roster: RosterEntry[];
+  openApplicants: OpenApplicant[];
+  pending: boolean;
+  run: (task: () => Promise<void>, fallback: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const matches = useMemo(() => {
+    const held = new Set(roster.map((entry) => entry.applicantId));
+    const needle = query.trim().toLowerCase();
+    return openApplicants.filter(
+      (applicant) =>
+        !held.has(applicant.id) &&
+        (!needle || applicant.alias.toLowerCase().includes(needle)),
+    );
+  }, [openApplicants, query, roster]);
+
+  const removable = roster.filter((entry) => !entry.scored).length;
+
+  return (
+    <div className="border-b border-border bg-muted/25 px-5 py-4 last:border-b-0">
+      <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        Assigned applications ({roster.length})
+      </p>
+
+      {roster.length ? (
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {roster.map((entry) => (
+            <span
+              key={entry.applicantId}
+              title={
+                entry.scored
+                  ? `${grader.name} has already submitted a score for ${entry.alias}.`
+                  : undefined
+              }
+              className={`inline-flex w-fit items-center gap-1 whitespace-nowrap rounded-full py-1 pr-1 pl-2.5 font-mono text-xs font-medium tracking-wide ${
+                entry.scored
+                  ? "bg-brand-soft pr-2.5 text-secondary-foreground"
+                  : "bg-card ring-1 ring-border"
+              }`}
+            >
+              {entry.alias}
+              {entry.scored ? null : (
+                <button
+                  type="button"
+                  aria-label={`Unassign ${entry.alias} from ${grader.name}`}
+                  disabled={pending}
+                  onClick={() =>
+                    run(async () => {
+                      await unassignGrader(entry.applicantId, grader.id, activeSetId);
+                      toast.success(`${entry.alias} removed from ${grader.name}.`);
+                    }, "Could not remove assignment.")
+                  }
+                  className="cursor-pointer rounded-full p-0.5 hover:bg-destructive/15"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Nothing assigned to {grader.name} yet.
+        </p>
+      )}
+
+      {roster.length > 0 && removable < roster.length ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {roster.length - removable} already scored and cannot be unassigned.
+        </p>
+      ) : null}
+
+      {grader.is_active ? (
+        <div className="mt-4 max-w-sm">
+          <label
+            htmlFor={`assign-${grader.id}`}
+            className="text-xs font-medium tracking-wide text-muted-foreground uppercase"
+          >
+            Assign an application
+          </label>
+          <Input
+            id={`assign-${grader.id}`}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter by alias, e.g. CZQ"
+            className="mt-1.5"
+          />
+          {matches.length ? (
+            <>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {matches.slice(0, PICK_LIMIT).map((applicant) => (
+                  <button
+                    key={applicant.id}
+                    type="button"
+                    disabled={pending}
+                    onClick={() =>
+                      run(async () => {
+                        await assignGrader(applicant.id, grader.id, activeSetId);
+                        setQuery("");
+                        toast.success(`${applicant.alias} assigned to ${grader.name}.`);
+                      }, "Could not assign grader.")
+                    }
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-dashed border-border bg-card px-2.5 py-1 font-mono text-xs font-medium tracking-wide hover:border-brand hover:bg-brand-soft"
+                  >
+                    <PlusIcon className="size-3" />
+                    {applicant.alias}
+                  </button>
+                ))}
+              </div>
+              {matches.length > PICK_LIMIT ? (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {matches.length - PICK_LIMIT} more — keep typing to narrow it down.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {query.trim()
+                ? "No application with a free slot matches that."
+                : "Every application already has a full set of graders."}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Reactivate {grader.name} to assign them new applications.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function PreviewRow({
   label,
@@ -65,14 +234,20 @@ export function GraderDashboard({
   activeSetId,
   gradersPerApplicant,
   graders,
+  rosters,
+  openApplicants,
 }: {
   activeSetId: string;
   /** From the active set. Sets created before the move to three graders keep
    *  their two, so this is not a constant. */
   gradersPerApplicant: number;
   graders: GraderProgress[];
+  /** What each grader is holding, keyed by grader id. */
+  rosters: Record<string, RosterEntry[]>;
+  openApplicants: OpenApplicant[];
 }) {
   const router = useRouter();
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [pending, startTransition] = useTransition();
   const [deactivating, setDeactivating] = useState<GraderProgress | null>(null);
@@ -213,13 +388,26 @@ export function GraderDashboard({
         </div>
         {graders.map((grader) => {
           const remaining = Math.max(grader.assigned - grader.graded, 0);
+          const isExpanded = expanded === grader.id;
           return (
+            <Fragment key={grader.id}>
             <div
-              key={grader.id}
               className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border px-5 py-4 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_80px_120px]"
             >
               <div>
-                <p className="font-medium text-brand-dark">{grader.name}</p>
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  onClick={() => setExpanded(isExpanded ? null : grader.id)}
+                  className="flex cursor-pointer items-center gap-1.5 font-medium text-brand-dark hover:underline"
+                >
+                  {isExpanded ? (
+                    <ChevronUpIcon className="size-4" />
+                  ) : (
+                    <ChevronDownIcon className="size-4" />
+                  )}
+                  {grader.name}
+                </button>
                 <p className="text-xs text-muted-foreground">
                   {grader.is_active ? `${remaining} remaining` : "Inactive"}
                 </p>
@@ -246,6 +434,17 @@ export function GraderDashboard({
                 </Button>
               )}
             </div>
+            {isExpanded ? (
+              <GraderRoster
+                activeSetId={activeSetId}
+                grader={grader}
+                roster={rosters[grader.id] ?? []}
+                openApplicants={openApplicants}
+                pending={pending}
+                run={run}
+              />
+            ) : null}
+            </Fragment>
           );
         })}
       </section>
