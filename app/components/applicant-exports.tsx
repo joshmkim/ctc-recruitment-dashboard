@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
-  exportAdmittedApplicants,
+  exportWrittenRound,
   exportAliasMapping,
   type ExportResult,
 } from "@/lib/actions/exports";
@@ -43,8 +43,8 @@ export function ApplicantExports() {
         <div>
           <h2 className="font-heading font-semibold text-brand-dark">Exports</h2>
           <p className="mt-1 max-w-[62ch] text-sm text-secondary-foreground">
-            CSVs for the active set, with alias, name, email and role. Both carry
-            real names — keep them out of the repository and off shared drives.
+            Download the active set&apos;s written applications, applicant details,
+            scores, grader comments and final results in one CSV.
           </p>
         </div>
 
@@ -54,13 +54,13 @@ export function ApplicantExports() {
             disabled={pending}
             onClick={() =>
               download(
-                exportAdmittedApplicants,
-                (count) => `Exported ${count} admitted applicants.`,
+                exportWrittenRound,
+                (count) => `Exported ${count} written applications.`,
               )
             }
           >
             {pending ? <Loader2Icon className="animate-spin" /> : <DownloadIcon />}
-            Export admitted applicants
+            Export written round
           </Button>
           <Button
             variant="outline"
@@ -76,8 +76,8 @@ export function ApplicantExports() {
       </div>
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Admitted covers the written deliberation board&apos;s Admit decisions
-        only; a lean admit is not included.
+        Developers first, then designers. Each role is ordered Admit, Lean admit,
+        Lean reject, Reject, then No decision.
       </p>
     </section>
   );

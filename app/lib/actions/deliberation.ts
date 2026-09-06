@@ -2,7 +2,7 @@
 
 import { requireAdmin, requireIdentity } from "@/lib/admin-auth";
 import { requireActiveApplicantSet } from "@/lib/applicant-sets";
-import { getApplicant, getApplicants } from "@/lib/applications";
+import { getApplicant, getApplicants, type Applicant } from "@/lib/applications";
 import type { Decision } from "@/lib/actions/admin";
 import { type AssignmentSlot } from "@/lib/grading";
 import { QUESTION_IDS } from "@/lib/questions";
@@ -302,22 +302,24 @@ export async function getWrittenScoreSummary(
   return scoresForApplicant(applicantId, ctx);
 }
 
-/**
- * Every applicant with their scores, normalization and decision.
- *
- * `includeNames` is false for the shared board, which shows aliases only. The
- * real name and the resume link are dropped here rather than hidden in the
- * browser, so a page that will not render them never receives them.
- */
-async function loadDeliberationApplicants(
-  { includeNames }: { includeNames: boolean },
-): Promise<DeliberationApplicant[]> {
+export type WrittenRoundApplicant = Applicant & {
+  scores: ApplicantScoreSummary;
+  decision: Decision | null;
+};
+
+/** Resolve the set once so application data, scores and decisions stay together. */
+async function loadWrittenRound() {
   const set = await requireActiveApplicantSet();
 
   const [applicants, ctx, decisionsResult] = await Promise.all([
     getApplicants(set.id),
     loadScoreContext(set.id, set.gradersPerApplicant),
-    supabase.from("decisions").select("applicant_id, decision").eq("set_id", set.id),
+    selectAllRows<{ applicant_id: string; decision: Decision }>(
+      "decisions",
+      "applicant_id, decision",
+      "applicant_id",
+      { column: "set_id", value: set.id },
+    ),
   ]);
 
   if (decisionsResult.error) {
@@ -325,11 +327,34 @@ async function loadDeliberationApplicants(
   }
 
   const decisions = new Map(
-    (decisionsResult.data ?? []).map((item) => [item.applicant_id, item.decision as Decision]),
+    (decisionsResult.data ?? []).map((item) => [item.applicant_id, item.decision]),
   );
 
+  return {
+    set,
+    applicants: applicants.map((applicant): WrittenRoundApplicant => ({
+      ...applicant,
+      scores: scoresForApplicant(applicant.id, ctx),
+      decision: decisions.get(applicant.id) ?? null,
+    })),
+  };
+}
+
+/** Full written data is only available to admins, including through exports. */
+export async function getWrittenRoundForExport() {
+  await requireAdmin();
+  return loadWrittenRound();
+}
+
+/**
+ * `includeNames` is false for the shared board. Application details are dropped
+ * here, so the shared board never receives real names, resumes or profiles.
+ */
+async function loadDeliberationApplicants(
+  { includeNames }: { includeNames: boolean },
+): Promise<DeliberationApplicant[]> {
+  const { applicants } = await loadWrittenRound();
   return applicants.map((applicant) => {
-    const scores = scoresForApplicant(applicant.id, ctx);
     return {
       id: applicant.id,
       name: applicant.name,
@@ -337,8 +362,8 @@ async function loadDeliberationApplicants(
       graduationYear: applicant.profile.graduationYear,
       resumeUrl: includeNames ? applicant.profile.resumeUrl : null,
       role: applicant.profile.role,
-      ...scores,
-      decision: decisions.get(applicant.id) ?? null,
+      ...applicant.scores,
+      decision: applicant.decision,
     };
   });
 }
